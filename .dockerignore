@@ -1,0 +1,60 @@
+# ============================================================
+# Docker 构建上下文排除清单
+# ============================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# 环境配置（敏感）
+.env
+.env.local
+.env.*.local
+
+# Frontend
+frontend/node_modules
+frontend/dist
+frontend/.vite
+frontend/*.log
+frontend/coverage
+
+# Backend
+backend/__pycache__
+backend/**/__pycache__
+backend/*.pyc
+backend/**/*.pyc
+backend/.pytest_cache
+backend/.mypy_cache
+backend/.ruff_cache
+backend/htmlcov
+backend/.coverage
+backend/.venv
+backend/venv
+backend/outputs
+backend/evalscope.db
+backend/evalscope.db.bak*
+backend/data
+backend/*.log
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+
+# 文档与构建产物
+docs/_build
+*.md.bak
+
+# 运行时数据
+data
+outputs
+*.log
+start.log
+
+# 备份/临时
+*.bak
+*.tmp
+*~

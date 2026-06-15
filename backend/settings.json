@@ -1,0 +1,6 @@
+{
+  "output_dir": "../outputs",
+  "dataset_dir": "../data/datasets",
+  "use_cache": true,
+  "debug": true
+}

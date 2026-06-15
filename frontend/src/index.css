@@ -1,0 +1,272 @@
+/* ========================================
+   EvalScope 工作流引擎 — 全局基础样式
+   组件级样式已迁移到 antd theme token (main.tsx)
+   ======================================== */
+
+:root {
+  /* 主色系 */
+  --color-primary: #1890ff;
+  --color-primary-hover: #40a9ff;
+  --color-primary-soft: rgba(24, 144, 255, 0.08);
+  --color-accent: #9254de;
+  --color-cyan: #36cfc9;
+
+  /* 中性色 */
+  --color-bg-page: #f5f7fb;
+  --color-bg-card: #ffffff;
+  --color-bg-subtle: #fafbfc;
+  --color-bg-muted: #f0f2f7;
+
+  --color-text-primary: #1f2d3d;
+  --color-text-secondary: #4e5969;
+  --color-text-muted: #86909c;
+  --color-text-placeholder: #c9cdd4;
+
+  --color-border: #e6e8eb;
+  --color-border-light: #f0f2f5;
+
+  /* 状态色 */
+  --color-success: #52c41a;
+  --color-success-soft: rgba(82, 196, 26, 0.1);
+  --color-warning: #faad14;
+  --color-warning-soft: rgba(250, 173, 20, 0.1);
+  --color-error: #ff4d4f;
+  --color-error-soft: rgba(255, 77, 79, 0.1);
+  --color-info: #1890ff;
+  --color-info-soft: rgba(24, 144, 255, 0.1);
+
+  /* 渐变 */
+  --gradient-primary: linear-gradient(135deg, #1890ff 0%, #9254de 100%);
+  --gradient-sider: linear-gradient(180deg, #1a1d2e 0%, #1a2342 60%, #0f2547 100%);
+  --gradient-header: linear-gradient(135deg, #1a1d2e 0%, #1a2342 60%, #0f2547 100%);
+  --gradient-success: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+  --gradient-warning: linear-gradient(135deg, #faad14 0%, #fa8c16 100%);
+  --gradient-error: linear-gradient(135deg, #ff4d4f 0%, #cf1322 100%);
+  --gradient-info: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+  --gradient-accent: linear-gradient(135deg, #9254de 0%, #722ed1 100%);
+  --gradient-cyan: linear-gradient(135deg, #36cfc9 0%, #13a8a8 100%);
+
+  /* 阴影 */
+  --shadow-xs: 0 1px 2px rgba(15, 37, 71, 0.04);
+  --shadow-sm: 0 2px 6px rgba(15, 37, 71, 0.06);
+  --shadow-md: 0 4px 16px rgba(15, 37, 71, 0.08);
+  --shadow-lg: 0 12px 32px rgba(15, 37, 71, 0.1);
+  --shadow-primary: 0 4px 14px rgba(24, 144, 255, 0.22);
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  /* 字体 */
+  --font-family: 'SF Pro Display', 'Inter', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* ========================================
+   全局重置
+   ======================================== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: var(--font-family);
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv11', 'ss01';
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(24, 144, 255, 0.18);
+  color: var(--color-text-primary);
+}
+
+/* ========================================
+   滚动条
+   ======================================== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d6dae1;
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #aab2bf;
+}
+
+/* ========================================
+   工具类
+   ======================================== */
+.gradient-text {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.page-fade-in {
+  animation: pageFadeIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* ========================================
+   细节微调（theme token 无法覆盖的部分）
+   ======================================== */
+
+/* hoverable 卡片 hover 阴影：只用阴影 + 边框，不再做 translateY 跳动 */
+.ant-card-hoverable {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease !important;
+}
+.ant-card-hoverable:hover {
+  box-shadow: var(--shadow-md) !important;
+  border-color: rgba(24, 144, 255, 0.35) !important;
+}
+
+/* Tag 微调 */
+.ant-tag {
+  border-radius: 6px !important;
+  padding-inline: 8px !important;
+  font-weight: 500 !important;
+}
+
+/* Statistic 数字字体特性 */
+.ant-statistic-content-value {
+  font-feature-settings: 'tnum';
+  font-weight: 600;
+}
+
+/* Form label 加粗 */
+.ant-form-item-label > label {
+  font-weight: 500 !important;
+}
+
+/* 表格头部加粗 + 字号 */
+.ant-table-thead > tr > th {
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  letter-spacing: 0.2px;
+}
+
+/* Drawer / Modal 标题加粗 */
+.ant-modal-title,
+.ant-drawer-title {
+  font-weight: 600 !important;
+  font-size: 16px !important;
+}
+
+/* Steps 序号字体 */
+.ant-steps-item-icon .ant-steps-icon {
+  font-weight: 600;
+}
+
+/* Empty 描述 */
+.ant-empty-description {
+  color: var(--color-text-muted) !important;
+}
+
+/* Tooltip 阴影 */
+.ant-tooltip-inner {
+  box-shadow: var(--shadow-md);
+}
+
+/* 按钮主按钮 hover：阴影更柔 */
+.ant-btn-primary:not(:disabled):hover {
+  box-shadow: 0 6px 18px rgba(24, 144, 255, 0.3) !important;
+}
+
+/* Menu — 深色侧边栏定制 */
+.eval-sider .ant-menu-dark .ant-menu-item,
+.eval-sider .ant-menu-dark .ant-menu-submenu-title {
+  color: rgba(255, 255, 255, 0.72) !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+}
+.eval-sider .ant-menu-dark .ant-menu-item .anticon,
+.eval-sider .ant-menu-dark .ant-menu-submenu-title .anticon {
+  font-size: 17px !important;
+}
+.eval-sider .ant-menu-dark .ant-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #ffffff !important;
+}
+.eval-sider .ant-menu-dark .ant-menu-item-selected {
+  background: linear-gradient(
+    90deg,
+    rgba(24, 144, 255, 0.32) 0%,
+    rgba(146, 84, 222, 0.22) 100%
+  ) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.18);
+}
+
+/* 状态徽标点（脉冲） */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 0 4px currentColor;
+  opacity: 0.85;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+}

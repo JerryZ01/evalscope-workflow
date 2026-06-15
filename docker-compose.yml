@@ -1,0 +1,65 @@
+# ============================================================
+# EvalScope Workflow — Full-Stack Docker Compose
+# 一行启动：docker compose up -d
+# ============================================================
+# 用法:
+#   1. cp .env.example .env  并按需修改端口、密钥等
+#   2. docker compose up -d --build
+#   3. 浏览器访问 http://<host>:${FRONTEND_PORT:-5801}
+# ============================================================
+
+services:
+  # ---------------- Backend ----------------
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: evalscope-workflow-backend:latest
+    container_name: evalscope-backend
+    restart: unless-stopped
+    # Compose 默认会自动读取仓库根目录的 .env 做变量替换，无需显式 env_file。
+    # 如果想把 .env 整个注入到容器，复制 .env.example 为 .env 后取消下面注释：
+    # env_file:
+    #   - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=5900
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/db/evalscope.db
+      - EVALSCOPE_DATASET_DIR=/app/data/datasets
+      - EVALSCOPE_WORK_DIR=/app/outputs
+    volumes:
+      # 数据持久化：sqlite、评测输出、数据集缓存都映射到宿主目录
+      - ./data/db:/app/data/db
+      - ./data/outputs:/app/outputs
+      - ./data/datasets:/app/data/datasets
+      # ---- 可选：放开后端容器对宿主 docker 的访问 ----
+      # 编程类沙箱评测（need_sandbox=true 的数据集）需要后端能起 docker 容器。
+      # 如果你不跑这类评测，可以注释下面两行；保留则需宿主已安装 docker。
+      - /var/run/docker.sock:/var/run/docker.sock
+    # 仅暴露给前端容器（同 network 内），默认不映射到宿主，避免端口冲突
+    expose:
+      - "5900"
+    # 如果你想从宿主直接访问后端（debug / API 文档），取消下行注释
+    ports:
+      - "${BACKEND_PORT:-5900}:5900"
+    networks:
+      - evalscope-net
+
+  # ---------------- Frontend ----------------
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: evalscope-workflow-frontend:latest
+    container_name: evalscope-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-5801}:80"
+    networks:
+      - evalscope-net
+
+networks:
+  evalscope-net:
+    driver: bridge
