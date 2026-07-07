@@ -13,7 +13,7 @@
 │  ┌────────────────────────────────────────────────────┐ │
 │  │                  API Routes                         │ │
 │  │  /api/tasks   /api/eval   /api/results             │ │
-│  │  /api/catalog /api/models /api/settings            │ │
+│  │  /api/catalog /api/models /api/settings /api/chat  │ │
 │  └────────────────────────────────────────────────────┘ │
 │  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐  │
 │  │  SSEManager  │  EvalScopeRunner │  CatalogService  │  │
@@ -51,6 +51,8 @@ evalscope-workflow/
 │   │   │   ├── results.py           # 结果查询 + 可视化数据
 │   │   │   ├── catalog.py           # 数据集/模型/指标目录
 │   │   │   ├── models.py            # 已管理模型 CRUD
+│   │   │   ├── chat.py              # AI 助手流式对话 + Function Calling
+│   │   │   ├── chat_tools.py        # Function Calling 工具定义与执行函数
 │   │   │   └── settings.py          # 系统设置（内存存储）
 │   │   ├── core/
 │   │   │   ├── config.py            # Pydantic BaseSettings（环境变量配置）
@@ -72,7 +74,7 @@ evalscope-workflow/
 │   └── evalscope_wrapper/
 │       ├── runner.py                # 异步评测执行器（API 使用）
 │       ├── executor.py              # 同步执行器（log tail，支持取消）
-│       ├── registry.py              # EvalScope 注册表封装
+│       ├── registry.py              # EvalScope 注册表封装 + 中文描述预加载
 │       └── catalog.py               # 目录服务
 ├── frontend/
 │   ├── src/

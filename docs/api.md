@@ -429,6 +429,56 @@ GET /api/models/brief
 
 ---
 
+## AI 助手 `/api/chat`
+
+### 流式对话（支持 Function Calling）
+
+```
+POST /api/chat/
+Content-Type: application/json
+
+{
+  "model_id": 1,
+  "messages": [
+    {"role": "user", "content": "我最近跑了哪些评测？"}
+  ]
+}
+
+响应: text/event-stream (SSE)
+
+# 普通文本回复
+data: {"content": "你"}
+data: {"content": "好"}
+data: {"done": true}
+
+# 工具调用时
+data: {"content": "\n正在查询query_tasks...\n\n"}
+data: {"content": "根据查询结果..."}
+data: {"done": true}
+
+# 错误
+data: {"error": "模型 API 响应超时"}
+```
+
+**Function Calling 工具列表**：
+
+| 工具名 | 说明 | 参数 |
+|--------|------|------|
+| `query_tasks` | 查询任务列表 | name?(模糊搜索), status?, model_name?, limit? |
+| `get_task_detail` | 获取任务详情+结果 | task_id?, task_name?(模糊匹配) |
+| `compare_models` | 对比模型评测结果 | model_names(必填), dataset(必填) |
+| `list_datasets` | 查询可用数据集 | search?, tag?, limit? |
+| `list_managed_models` | 查询已配置模型 | active_only? |
+| `get_dashboard_summary` | 仪表盘统计概览 | 无 |
+
+**工具调用机制**：
+- LLM 自动决定何时调用工具，最多 5 轮工具调用
+- 工具只做只读查询，不创建/修改数据
+- 如果模型不支持 tools 参数，自动回退到纯文本对话
+- 同一工具连续两次返回错误时，终止工具循环
+
+---
+
 ## 错误响应格式
 
 所有 API 错误统一返回 `HTTPException`，响应格式：

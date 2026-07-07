@@ -308,6 +308,40 @@ def _run_eval_in_process(config, result_queue, task_id=None):
         sys.stderr = old_stderr
 
 
+def _read_log_increment(log_file_path: str, last_offset: int) -> tuple:
+    """读取日志文件的增量内容
+
+    Returns:
+        (new_content, new_offset) - 新增的日志文本和新的文件偏移量
+    """
+    try:
+        if not os.path.exists(log_file_path):
+            return "", last_offset
+        file_size = os.path.getsize(log_file_path)
+        if file_size <= last_offset:
+            return "", last_offset
+        with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            f.seek(last_offset)
+            new_content = f.read()
+            new_offset = f.tell()
+        return new_content, new_offset
+    except Exception:
+        return "", last_offset
+
+
+async def _broadcast_log_increment(task_id: int, new_logs: str):
+    """通过 SSE 广播日志增量"""
+    try:
+        from app.api.eval import SSEManager
+        await SSEManager.broadcast(task_id, "logs", {
+            "logs": new_logs,
+            "incremental": True
+        })
+        logger.info(f"SSE 广播日志增量成功: task_id={task_id}, {len(new_logs)} bytes")
+    except Exception as e:
+        logger.warning(f"广播日志增量失败: {e}")
+
+
 class EvalScopeRunner:
     """EvalScope 评测执行器"""
 
@@ -568,6 +602,24 @@ class EvalScopeRunner:
 
             self._report_progress(40, "正在执行评测...")
 
+            # 在启动子进程前，将 output_dir 写入数据库
+            # 这样前端日志 API 可以在评测运行期间找到日志文件
+            if self.task_id:
+                try:
+                    import sqlite3
+                    db_path = os.path.join(os.path.dirname(__file__), '..', 'evalscope.db')
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE evaluation_tasks SET output_dir=? WHERE id=?",
+                        (work_dir, self.task_id)
+                    )
+                    conn.commit()
+                    conn.close()
+                    logger.info(f"已更新 output_dir: {work_dir}")
+                except Exception as e:
+                    logger.warning(f"更新 output_dir 失败: {e}")
+
             # 使用子进程运行评测，支持强制取消
             import multiprocessing
 
@@ -583,11 +635,26 @@ class EvalScopeRunner:
             self._pid = self._process.pid
             logger.info(f"评测进程已启动: task_id={self.task_id}, pid={self._pid}")
 
-            # 等待进程完成
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._process.join)
+            # 等待进程完成，同时定期推送日志增量
+            log_file_path = os.path.join(work_dir, 'logs', 'eval_log.log')
+            logger.info(f"日志增量推送启动: log_file_path={log_file_path}, abs={os.path.abspath(log_file_path)}")
+            last_log_offset = 0
+            while self._process.is_alive():
+                # 读取并推送日志增量
+                new_logs, last_log_offset = _read_log_increment(log_file_path, last_log_offset)
+                if new_logs and self.task_id:
+                    logger.info(f"推送日志增量: {len(new_logs)} bytes, offset={last_log_offset}")
+                    await _broadcast_log_increment(self.task_id, new_logs)
+                # 等待 2 秒后再次检查
+                await asyncio.sleep(2)
 
-            # 检查是否被取消
+            # 进程已退出，推送最后一批日志
+            new_logs, last_log_offset = _read_log_increment(log_file_path, last_log_offset)
+            if new_logs and self.task_id:
+                await _broadcast_log_increment(self.task_id, new_logs)
+
+            # 确保子进程资源回收
+            self._process.join()
             if self.is_cancelled():
                 duration = time.time() - start_time
                 logger.info(f"评测任务已被取消: task_id={self.task_id}")

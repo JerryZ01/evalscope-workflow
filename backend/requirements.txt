@@ -20,6 +20,12 @@ evalscope==1.7.0
 httpx>=0.25.0
 openai>=1.3.0
 
+# AI Assistant (LangGraph + Langfuse 可观测性)
+langchain>=0.3.0
+langchain-openai>=0.3.0
+langgraph>=1.0.0
+langfuse>=4.0.0
+
 # Configuration
 pyyaml>=6.0.0
 

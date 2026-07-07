@@ -264,6 +264,106 @@ body {
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* AI Chat */
+.ai-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0;
+}
+.ai-chat-messages p {
+  margin-bottom: 0.5em;
+}
+.ai-chat-messages p:last-child {
+  margin-bottom: 0;
+}
+.ai-chat-messages pre {
+  background: rgba(0,0,0,0.06);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.ai-chat-messages code {
+  font-size: 12px;
+}
+.ai-chat-messages ul, .ai-chat-messages ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+/* 数据集描述 Markdown */
+.dataset-description h1,
+.dataset-description h2,
+.dataset-description h3 {
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.dataset-description h1 { font-size: 1.2em; }
+.dataset-description h2 { font-size: 1.1em; }
+.dataset-description h3 { font-size: 1em; }
+.dataset-description h1:first-child,
+.dataset-description h2:first-child,
+.dataset-description h3:first-child {
+  margin-top: 0;
+}
+.dataset-description p {
+  margin-bottom: 0.6em;
+}
+.dataset-description p:last-child {
+  margin-bottom: 0;
+}
+.dataset-description ul, .dataset-description ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.6em;
+}
+.dataset-description li {
+  margin-bottom: 0.2em;
+}
+.dataset-description code {
+  background: rgba(0,0,0,0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: var(--font-mono);
+}
+.dataset-description pre {
+  background: rgba(0,0,0,0.06);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  font-size: 0.9em;
+}
+.dataset-description pre code {
+  background: none;
+  padding: 0;
+}
+.dataset-description strong {
+  font-weight: 600;
+}
+.dataset-description blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 12px;
+  margin: 0.6em 0;
+  color: var(--color-text-secondary);
+}
+.dataset-description table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 0.6em;
+  font-size: 0.95em;
+}
+.dataset-description th, .dataset-description td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.dataset-description th {
+  background: var(--color-bg-muted);
+  font-weight: 600;
+}
+
 /* 响应式 */
 @media (max-width: 768px) {
   ::-webkit-scrollbar {

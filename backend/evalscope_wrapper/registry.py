@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 class EvalScopeRegistry:
     """EvalScope 注册表包装器"""
 
+    # 预加载的中文描述缓存 {name: description_zh}
+    _zh_cache: Dict[str, str] = {}
+    _zh_loaded: bool = False
+
     # 需要沙箱执行的数据集（基于标签 'Coding' 或硬编码列表）
     SANDBOX_REQUIRED_DATASETS = {
         'mbpp', 'humaneval', 'mbpp_plus', 'humaneval_plus',
@@ -35,6 +39,36 @@ class EvalScopeRegistry:
         'arena_hard', 'alpaca_eval', 'frames', 'health_bench',
         'process_bench', 'tir_bench', 'poly_math',
     }
+
+    @staticmethod
+    def _load_zh_descriptions():
+        """从 evalscope _meta/ 目录预加载所有中文描述到内存"""
+        if EvalScopeRegistry._zh_loaded:
+            return
+        try:
+            import evalscope.benchmarks
+            meta_dir = os.path.join(os.path.dirname(evalscope.benchmarks.__file__), '_meta')
+            if not os.path.isdir(meta_dir):
+                logger.warning(f"_meta 目录不存在: {meta_dir}")
+                EvalScopeRegistry._zh_loaded = True
+                return
+            for f in os.listdir(meta_dir):
+                if not f.endswith('.json'):
+                    continue
+                name = f[:-5]  # 去掉 .json
+                try:
+                    with open(os.path.join(meta_dir, f), encoding='utf-8') as fh:
+                        data = json.load(fh)
+                        zh = data.get('readme', {}).get('zh', '')
+                        if zh:
+                            EvalScopeRegistry._zh_cache[name] = zh
+                except Exception as e:
+                    logger.debug(f"加载 {f} 中文描述失败: {e}")
+            logger.info(f"预加载中文描述完成: {len(EvalScopeRegistry._zh_cache)} 条")
+        except Exception as e:
+            logger.warning(f"预加载中文描述失败: {e}")
+        finally:
+            EvalScopeRegistry._zh_loaded = True
 
     @staticmethod
     def _is_sandbox_required(name: str, tags: List[str]) -> bool:
@@ -87,6 +121,9 @@ class EvalScopeRegistry:
         try:
             from evalscope.api.registry import BENCHMARK_REGISTRY
 
+            # 首次调用时预加载中文描述
+            EvalScopeRegistry._load_zh_descriptions()
+
             datasets = []
             for name, meta in BENCHMARK_REGISTRY.items():
                 tags = list(getattr(meta, 'tags', []) or [])
@@ -94,6 +131,7 @@ class EvalScopeRegistry:
                     'name': name,
                     'pretty_name': getattr(meta, 'pretty_name', name),
                     'description': getattr(meta, 'description', ''),
+                    'description_zh': EvalScopeRegistry._zh_cache.get(name, ''),
                     'tags': tags,
                     'subset_list': list(getattr(meta, 'subset_list', ['default'])),
                     'few_shot_num': getattr(meta, 'few_shot_num', 0),

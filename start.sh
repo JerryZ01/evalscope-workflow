@@ -41,6 +41,13 @@ echo -e "${YELLOW}激活 conda evalscope 环境...${NC}"
 eval "$(conda shell.bash hook)"
 conda activate evalscope
 
+# Langfuse 可观测性配置（从 .env 文件读取，或手动 export）
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+
 # 检查 Node.js
 if ! command -v node &> /dev/null; then
     echo -e "${RED}错误: 未找到 Node.js${NC}"

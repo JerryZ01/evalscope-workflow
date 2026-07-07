@@ -25,9 +25,10 @@ const TaskDetail: React.FC = () => {
 
   // SSE 连接引用
   const eventSourceRef = useRef<EventSource | null>(null);
-  const logsPollingRef = useRef<NodeJS.Timeout | null>(null);
-  // 任务状态兜底轮询（SSE 失败/丢包时仍能更新 status/progress）
-  const taskPollingRef = useRef<NodeJS.Timeout | null>(null);
+  // 日志容器引用（用于自动滚动）
+  const logContainerRef = useRef<HTMLPreElement | null>(null);
+  // SSE 连接状态引用（避免闭包捕获过期值）
+  const sseConnectedRef = useRef(false);
 
   useEffect(() => {
     if (taskId) {
@@ -58,6 +59,7 @@ const TaskDetail: React.FC = () => {
 
     eventSource.onopen = () => {
       setSseConnected(true);
+      sseConnectedRef.current = true;
       console.log('SSE: 连接已打开');
     };
 
@@ -83,6 +85,22 @@ const TaskDetail: React.FC = () => {
         }
       } catch (e) {
         console.error('SSE: 解析进度事件失败:', e);
+      }
+    });
+
+    // 日志增量事件
+    eventSource.addEventListener('logs', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.incremental && data.logs) {
+          setTaskLogs(prev => prev + data.logs);
+          // 自动滚动到底部
+          setTimeout(() => {
+            logContainerRef.current?.scrollTo({ top: logContainerRef.current.scrollHeight });
+          }, 50);
+        }
+      } catch (e) {
+        console.error('SSE: 解析日志事件失败:', e);
       }
     });
 
@@ -113,6 +131,7 @@ const TaskDetail: React.FC = () => {
     eventSource.onerror = (error) => {
       console.error('SSE: 连接错误:', error);
       setSseConnected(false);
+      sseConnectedRef.current = false;
       // 断开重连
       eventSource.close();
       eventSourceRef.current = null;
@@ -128,28 +147,15 @@ const TaskDetail: React.FC = () => {
 
   // 根据任务状态管理 SSE 连接
   useEffect(() => {
-    if (taskId && currentTask) {
-      console.log('TaskDetail: 任务状态变化', currentTask.status, 'taskId:', taskId);
+    if (!taskId || !currentTask) return;
 
-      // 运行中的任务建立 SSE 连接 + 兜底轮询
-      if (currentTask.status === 'running' || currentTask.status === 'pending') {
-        console.log('TaskDetail: 启动 SSE 连接和日志轮询');
-        connectSSE();
-
-        // 日志轮询（每 3 秒）
-        logsPollingRef.current = setInterval(() => {
-          loadLogs();
-        }, 3000);
-
-        // 任务状态兜底轮询（每 5 秒）—— SSE 失败时仍能更新进度/状态
-        taskPollingRef.current = setInterval(() => {
-          fetchTask(Number(taskId));
-        }, 5000);
-      }
-
-      // 加载初始日志
-      loadLogs();
+    // 运行中的任务建立 SSE 连接
+    if (currentTask.status === 'running' || currentTask.status === 'pending') {
+      connectSSE();
     }
+
+    // 加载日志（仅在首次进入或状态切换时）
+    loadLogs(true);
 
     return () => {
       // 清理 SSE 连接
@@ -157,36 +163,40 @@ const TaskDetail: React.FC = () => {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
-      // 清理日志轮询
-      if (logsPollingRef.current) {
-        clearInterval(logsPollingRef.current);
-        logsPollingRef.current = null;
-      }
-      // 清理任务状态轮询
-      if (taskPollingRef.current) {
-        clearInterval(taskPollingRef.current);
-        taskPollingRef.current = null;
-      }
       setSseConnected(false);
+      sseConnectedRef.current = false;
     };
   }, [taskId, currentTask?.status]);
 
   // 加载日志
-  const loadLogs = async () => {
+  const loadLogs = async (forceFullUpdate: boolean = false) => {
     if (!taskId) return;
-    setLogsLoading(true);
     try {
-      console.log('loadLogs: 发起请求, taskId:', taskId);
       const response = await fetch(`/api/eval/log/${taskId}`);
-      console.log('loadLogs: 收到响应, status:', response.status);
       const data = await response.json();
-      console.log('loadLogs: 日志数据, source:', data.log_source, 'length:', (data.logs || '').length);
-      setTaskLogs(data.logs || "");
-      setActualCommand(data.actual_command || "");  // 保存执行命令
+      setActualCommand(data.actual_command || "");
+      const logs = data.logs || "";
+      // forceFullUpdate=true 时强制覆盖（如手动刷新、初始加载）
+      // SSE 连接时用全量日志做同步（避免增量丢失），未连接时也全量覆盖
+      if (forceFullUpdate || !sseConnectedRef.current) {
+        setTaskLogs(logs);
+      } else {
+        // SSE 已连接：如果服务端日志比当前显示的长，说明有增量丢失，用全量补齐
+        setTaskLogs(prev => {
+          if (logs.length > prev.length) {
+            return logs;
+          }
+          return prev;
+        });
+      }
+      // 加载全量日志后滚动到底部
+      if (forceFullUpdate) {
+        setTimeout(() => {
+          logContainerRef.current?.scrollTo({ top: logContainerRef.current.scrollHeight });
+        }, 50);
+      }
     } catch (error) {
       console.error("loadLogs: 加载失败:", error);
-    } finally {
-      setLogsLoading(false);
     }
   };
 
@@ -238,7 +248,7 @@ const TaskDetail: React.FC = () => {
       message.success('任务已停止');
       fetchTask(Number(taskId));
       // 停止后加载日志
-      loadLogs();
+      loadLogs(true);
     } catch (error: any) {
       message.error(error.message || '停止失败');
     }
@@ -678,7 +688,7 @@ const TaskDetail: React.FC = () => {
             <Button
               size="small"
               icon={<ReloadOutlined />}
-              onClick={loadLogs}
+              onClick={() => loadLogs(true)}
               loading={logsLoading}
             >
               刷新
@@ -686,7 +696,7 @@ const TaskDetail: React.FC = () => {
           }
         >
           {taskLogs ? (
-            <pre style={{
+            <pre ref={logContainerRef} style={{
               maxHeight: 500,
               overflow: 'auto',
               background: '#f5f5f5',

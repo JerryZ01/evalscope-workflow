@@ -49,3 +49,6 @@ dist-ssr/
 *.swp
 *.swo
 *~
+
+# Secrets
+.env

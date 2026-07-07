@@ -25,21 +25,28 @@ src/
 │   ├── results.ts        # 结果查询 + evalApi（日志/报告/SSE）
 │   ├── catalog.ts        # 目录 API
 │   ├── models.ts         # 模型管理 API
-│   └── settings.ts       # 设置 API
+│   ├── settings.ts       # 设置 API
+│   └── chat.ts           # AI 助手聊天 API（SSE 流式）
 ├── stores/
-│   └── index.ts          # Zustand stores
-│                         #   useTaskStore: tasks[], currentTask, actions
-│                         #   useCatalogStore: datasets[], models[], metrics[]
+│   ├── index.ts          # Zustand stores
+│   │                     #   useTaskStore: tasks[], currentTask, actions
+│   │                     #   useCatalogStore: datasets[], models[], metrics[]
+│   └── chatStore.ts      # AI 助手 store（多会话管理 + localStorage 持久化）
 ├── types/
 │   └── index.ts          # 所有 TypeScript 接口（Task, Dataset, Report 等）
+├── components/
+│   └── AIChat/           # AI 助手组件
+│       ├── ChatMessageList.tsx  # 消息列表（Markdown 渲染 + Loading）
+│       └── ChatInput.tsx        # 输入框 + 发送/停止按钮
 └── pages/
     ├── Dashboard/        # 首页
     ├── TaskList/         # 任务列表
     ├── TaskCreate/       # 创建任务（4步向导）
     ├── TaskEdit/         # 编辑任务（4步向导）
     ├── TaskDetail/       # 任务详情（进度/配置/图表/日志/报告）
-    ├── Catalog/          # 目录浏览
+    ├── Catalog/          # 目录浏览（中文描述 + Markdown 渲染）
     ├── Models/           # 模型管理
+    ├── AIChat/           # AI 助手（对话 + 会话列表）
     └── Settings/         # 系统设置
 ```
 
@@ -55,6 +62,7 @@ src/
 | `/tasks/:taskId` | `TaskDetail` | 任务详情 |
 | `/catalog` | `Catalog` | 数据集/模型/指标目录 |
 | `/models` | `Models` | 已管理模型 |
+| `/ai-chat` | `AIChat` | AI 助手（多会话对话） |
 | `/settings` | `SettingsPage` | 系统设置 |
 
 ## 状态管理
@@ -91,6 +99,46 @@ interface CatalogStore {
   fetchModels: () => Promise<void>;
   fetchMetrics: () => Promise<void>;
 }
+```
+
+### useChatStore
+
+```typescript
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface ChatStore {
+  // 会话
+  sessions: ChatSession[];
+  activeSessionId: string | null;
+  messages: ChatMessage[];
+  // 模型
+  models: ManagedModelBrief[];
+  selectedModelId: number | null;
+  // 状态
+  loading: boolean;
+  error: string | null;
+  // 会话操作
+  createSession: () => string;
+  switchSession: (id: string) => void;
+  deleteSession: (id: string) => void;
+  // 消息操作
+  sendMessage: (content: string) => Promise<void>;
+  stopStreaming: () => void;
+  clearMessages: () => void;
+  // 模型操作
+  setSelectedModel: (modelId: number) => void;
+  fetchModels: () => Promise<void>;
+}
+
+// 持久化：会话列表和消息自动保存到 localStorage
+// 初始化时自动恢复上次的活跃会话
+// 如果没有会话，自动创建第一个
 ```
 
 ## 核心功能实现
@@ -227,11 +275,14 @@ client.interceptors.response.use(
 |------|------|------|
 | `Layout` | `components/Layout/` | 侧边栏（深色渐变）+ 顶部头部 |
 | `EditTaskModal` | `pages/TaskDetail/EditTaskModal.tsx` | 任务参数弹窗编辑 |
+| `ChatMessageList` | `components/AIChat/ChatMessageList.tsx` | AI 助手消息列表（Markdown + Loading Spin） |
+| `ChatInput` | `components/AIChat/ChatInput.tsx` | AI 助手输入框（发送/停止按钮） |
 | `Dashboard` | `pages/Dashboard/` | 统计卡片 + 近期任务 |
 | `TaskList` | `pages/TaskList/` | 搜索表格 + 状态按钮 |
 | `TaskCreate` | `pages/TaskCreate/` | 4步创建向导 |
 | `TaskEdit` | `pages/TaskEdit/` | 4步编辑向导 |
 | `TaskDetail` | `pages/TaskDetail/` | 详情页（SSE + 图表 + 日志 + 报告） |
-| `Catalog` | `pages/Catalog/` | 标签页切换（数据集/模型/指标） |
+| `Catalog` | `pages/Catalog/` | 标签页切换（数据集/模型/指标）+ 中文描述 Markdown 渲染 |
+| `AIChat` | `pages/AIChat/` | AI 助手（对话区 + 左侧会话列表） |
 | `Models` | `pages/Models/` | 卡片网格 + CRUD 弹窗 |
 | `Settings` | `pages/Settings/` | 配置表单 |

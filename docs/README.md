@@ -18,8 +18,9 @@ EvalScope Workflow 是一个全栈评测工作流引擎，为 LLM/ML 模型评�
 | 实时进度 | SSE 推送进度更新，日志 3 秒轮询 |
 | 评测执行 | 支持 OpenAI API / LLM Checkpoint / Text2Image / Mock 等模型类型 |
 | 可视化报告 | 雷达图、柱状图、AI 分析、HTML 报告内嵌 |
-| 目录管理 | 数据集、模型类型、评测引擎、指标浏览 |
+| 目录管理 | 数据集、模型类型、评测引擎、指标浏览（中文描述 + Markdown 渲染） |
 | 模型管理 | API 凭证存储、默认配置复用 |
+| AI 助手 | Function Calling 查询评测数据、多会话管理、历史持久化 |
 
 ## 技术栈
 

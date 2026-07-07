@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list = ["*"]
 
+    # Langfuse 可观测性（v4 SDK 读 LANGFUSE_HOST 环境变量）
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = ""
+
 
 @lru_cache()
 def get_settings() -> Settings:

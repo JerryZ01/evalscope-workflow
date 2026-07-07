@@ -32,6 +32,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useCatalogStore } from '@/stores';
 import type { Dataset, ModelType, Metric } from '@/types';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import PageHeader from '@/components/common/PageHeader';
 
 // 将后端 tag 按四个维度分组（基于实际数据 30 个 tag 设计）
@@ -670,7 +672,7 @@ const Catalog: React.FC = () => {
               </div>
             )}
 
-            {detailDataset.description && (
+            {(detailDataset.description_zh || detailDataset.description) && (
               <div>
                 <Typography.Text type="secondary">描述</Typography.Text>
                 <div
@@ -680,12 +682,14 @@ const Catalog: React.FC = () => {
                     background: '#fafafa',
                     borderRadius: 6,
                     fontSize: 13,
-                    whiteSpace: 'pre-wrap',
                     lineHeight: 1.6,
                     color: '#595959',
                   }}
+                  className="dataset-description"
                 >
-                  {detailDataset.description}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {detailDataset.description_zh || detailDataset.description}
+                  </ReactMarkdown>
                 </div>
               </div>
             )}
