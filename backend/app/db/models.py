@@ -87,6 +87,10 @@ class EvaluationTask(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     user = relationship("User", back_populates="tasks")
 
+    @property
+    def has_model_key(self) -> bool:
+        return bool(self.model_key)
+
 
 class Dataset(Base):
     """数据集缓存表"""
@@ -154,3 +158,7 @@ class ManagedModel(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def has_api_key(self) -> bool:
+        return bool(self.api_key)

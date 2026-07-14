@@ -17,8 +17,14 @@ from typing import Literal
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langfuse.langchain import CallbackHandler
 
+from app.core.config import settings
+from app.db.models import TaskStatus
+from app.services.task_state import (
+    append_task_logs,
+    get_task_runtime_credentials,
+    update_task_state,
+)
 from app.workflows.state import EvalState
 
 logger = logging.getLogger(__name__)
@@ -48,12 +54,10 @@ def cancel_eval_process(task_id: int):
 
 # ---- Checkpoint 存储 ----
 
-CHECKPOINT_DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "evalscope_checkpoints.db"
-)
+CHECKPOINT_DB_PATH = os.path.abspath(settings.WORKFLOW_CHECKPOINT_DB)
 
 _checkpoint_saver = None
+CHECKPOINT_SCHEMA_VERSION = "2"
 
 
 async def get_checkpointer():
@@ -61,9 +65,31 @@ async def get_checkpointer():
     global _checkpoint_saver
     if _checkpoint_saver is None:
         import aiosqlite
+        os.makedirs(os.path.dirname(CHECKPOINT_DB_PATH), exist_ok=True)
         conn = await aiosqlite.connect(CHECKPOINT_DB_PATH)
         _checkpoint_saver = AsyncSqliteSaver(conn)
         await _checkpoint_saver.setup()
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS workflow_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        cursor = await conn.execute(
+            "SELECT value FROM workflow_meta WHERE key='security_schema_version'"
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None or row[0] != CHECKPOINT_SCHEMA_VERSION:
+            await conn.execute("DELETE FROM checkpoints")
+            await conn.execute("DELETE FROM writes")
+            await conn.execute(
+                "INSERT OR REPLACE INTO workflow_meta(key, value) VALUES(?, ?)",
+                ("security_schema_version", CHECKPOINT_SCHEMA_VERSION),
+            )
+            await conn.commit()
+            checkpoint_cursor = await conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            await checkpoint_cursor.fetchall()
+            await checkpoint_cursor.close()
+            await conn.execute("VACUUM")
+            logger.warning("旧工作流 checkpoint 已清理，以移除历史敏感状态")
     return _checkpoint_saver
 
 
@@ -118,11 +144,11 @@ def validate_params(state: EvalState) -> dict:
     """校验 API Key、模型连通性"""
     errors = []
     model_type = state.get("model_type", "openai_api")
-    model_key = state.get("model_key")
+    has_model_key = state.get("has_model_key", False)
     model_url = state.get("model_url")
 
     if model_type in ("openai_api", "openai", "chat_completion", "anthropic_api"):
-        if not model_key:
+        if not has_model_key:
             errors.append("API Key 未提供")
         if not model_url:
             errors.append("API URL 未提供")
@@ -137,8 +163,13 @@ def validate_params(state: EvalState) -> dict:
     return {"current_step": "参数校验通过"}
 
 
-def _run_eval_in_process(config, result_queue, task_id=None):
-    """在子进程中运行评测（复用 runner.py 的逻辑）"""
+def await_confirmation(state: EvalState) -> dict:
+    """One-time no-op node used as the human approval boundary."""
+    return {"current_step": "配置已确认"}
+
+
+def _run_eval_in_process(config, result_queue):
+    """在子进程中运行评测，所有持久化由父进程负责。"""
     import sys
     import io
 
@@ -146,20 +177,6 @@ def _run_eval_in_process(config, result_queue, task_id=None):
     old_stderr = sys.stderr
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
-
-    def update_logs_to_db(log_content):
-        if not task_id:
-            return
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE evaluation_tasks SET logs=? WHERE id=?", (log_content, task_id))
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
 
     try:
         sys.stdout = stdout_capture
@@ -169,8 +186,6 @@ def _run_eval_in_process(config, result_queue, task_id=None):
         report = run_task(config)
 
         captured_logs = stdout_capture.getvalue() + stderr_capture.getvalue()
-        if captured_logs:
-            update_logs_to_db(captured_logs)
 
         if hasattr(report, "to_dict"):
             result = report.to_dict()
@@ -182,13 +197,12 @@ def _run_eval_in_process(config, result_queue, task_id=None):
                 "metrics": getattr(report, "metrics", []) if hasattr(report, "metrics") else [],
             }
 
-        result_queue.put({"report": result, "error": None})
+        result_queue.put({"report": result, "error": None, "logs": captured_logs})
 
     except Exception as e:
         captured_logs = stdout_capture.getvalue() + stderr_capture.getvalue()
         error_logs = captured_logs + f"\n\n错误: {str(e)}\n"
-        update_logs_to_db(error_logs)
-        result_queue.put({"report": None, "error": str(e)})
+        result_queue.put({"report": None, "error": str(e), "logs": error_logs})
 
     finally:
         sys.stdout = old_stdout
@@ -198,9 +212,9 @@ def _run_eval_in_process(config, result_queue, task_id=None):
 async def run_eval(state: EvalState) -> dict:
     """执行评测（子进程 + SSE 推送）"""
     from evalscope.config import TaskConfig
-    from evalscope_wrapper.registry import EvalScopeRegistry
-
     task_id = state.get("task_id")
+    started_at = time.monotonic()
+    model_url, model_key = await get_task_runtime_credentials(task_id)
 
     # 更新数据库状态为 RUNNING
     await _update_task_status(task_id, "running", "正在执行评测...")
@@ -213,20 +227,11 @@ async def run_eval(state: EvalState) -> dict:
     if use_cache:
         work_dir = use_cache
     else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        work_dir = f"../outputs/{timestamp}"
+        run_name = state.get("task_uuid") or datetime.now().strftime("%Y%m%d_%H%M%S")
+        work_dir = os.path.abspath(os.path.join(settings.EVALSCOPE_WORK_DIR, run_name))
 
-    # 更新 output_dir
-    if task_id:
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            conn.execute("UPDATE evaluation_tasks SET output_dir=? WHERE id=?", (work_dir, task_id))
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
+    os.makedirs(work_dir, exist_ok=True)
+    await update_task_state(task_id, output_dir=work_dir)
 
     # 引擎映射
     ENGINE_MAP = {
@@ -240,11 +245,11 @@ async def run_eval(state: EvalState) -> dict:
     # judge 配置
     judge_model_args = {}
     judge_strategy = "auto"
-    if state.get("need_judge") and state.get("model_url") and state.get("model_key"):
+    if state.get("need_judge") and model_url and model_key:
         judge_model_args = {
             "model_id": state["model_name"],
-            "api_url": state["model_url"],
-            "api_key": state["model_key"],
+            "api_url": model_url,
+            "api_key": model_key,
             "generation_config": {"temperature": 0.0, "max_tokens": 1024},
         }
 
@@ -258,8 +263,8 @@ async def run_eval(state: EvalState) -> dict:
         model_id=state.get("model_name", ""),
         eval_type=state.get("model_type", "openai_api"),
         model_args={},
-        api_url=state.get("model_url") or None,
-        api_key=state.get("model_key") or None,
+        api_url=model_url or None,
+        api_key=model_key or None,
         datasets=state.get("datasets", []),
         dataset_args=state.get("dataset_args") or {},
         generation_config=state.get("generation_config") or {},
@@ -288,7 +293,7 @@ async def run_eval(state: EvalState) -> dict:
     result_queue = multiprocessing.Queue()
     process = multiprocessing.Process(
         target=_run_eval_in_process,
-        args=(config, result_queue, task_id),
+        args=(config, result_queue),
     )
     process.start()
     logger.info(f"评测进程已启动: task_id={task_id}, pid={process.pid}")
@@ -311,20 +316,29 @@ async def run_eval(state: EvalState) -> dict:
         new_logs, last_log_offset = _read_log_increment(log_file_path, last_log_offset)
         if new_logs and task_id:
             await _sse_broadcast(task_id, "logs", {"logs": new_logs, "incremental": True})
+    except asyncio.CancelledError:
+        cancel_eval_process(task_id)
+        raise
     except Exception:
         # 如果日志增量读取失败，降级为简单等待
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, process.join)
 
-    process.join()
-    # 清理注册
-    _eval_processes.pop(task_id, None)
+    finally:
+        if process.is_alive():
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, process.join)
+        else:
+            process.join()
+        _eval_processes.pop(task_id, None)
 
     # 获取结果
     if not result_queue.empty():
         result_data = result_queue.get()
     else:
-        result_data = {"report": None, "error": "评测进程无返回结果"}
+        result_data = {"report": None, "error": "评测进程无返回结果", "logs": ""}
+
+    await append_task_logs(task_id, result_data.get("logs", ""))
 
     if result_data.get("error"):
         return {
@@ -332,6 +346,7 @@ async def run_eval(state: EvalState) -> dict:
             "eval_error": result_data["error"],
             "work_dir": work_dir,
             "output_dir": work_dir,
+            "eval_duration": time.monotonic() - started_at,
             "current_step": "评测执行失败",
         }
 
@@ -341,22 +356,6 @@ async def run_eval(state: EvalState) -> dict:
 
     final_score = sum(all_scores) / len(all_scores) if all_scores else result_dict.get("score", 0.0)
 
-    # 更新数据库结果
-    if task_id:
-        try:
-            import sqlite3
-            import json
-            db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "UPDATE evaluation_tasks SET results=?, progress=100 WHERE id=?",
-                (json.dumps({"score": final_score, "metrics": all_metrics}, default=str), task_id),
-            )
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
-
     return {
         "eval_success": True,
         "eval_score": final_score,
@@ -364,6 +363,7 @@ async def run_eval(state: EvalState) -> dict:
         "work_dir": work_dir,
         "output_dir": work_dir,
         "eval_error": error_hint,
+        "eval_duration": time.monotonic() - started_at,
         "current_step": "评测执行完成",
     }
 
@@ -373,20 +373,15 @@ async def collect_results(state: EvalState) -> dict:
     task_id = state.get("task_id")
     score = state.get("eval_score", 0.0)
 
-    # 更新数据库状态为 COMPLETED
-    if task_id:
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "UPDATE evaluation_tasks SET status='COMPLETED', completed_at=datetime('now'), duration=?, current_step=? WHERE id=?",
-                (state.get("eval_duration", 0), f"评测完成，得分 {score:.4f}", task_id),
-            )
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
+    await update_task_state(
+        task_id,
+        status=TaskStatus.COMPLETED,
+        progress=100,
+        current_step=f"评测完成，得分 {score:.4f}",
+        results={"score": score, "metrics": state.get("eval_metrics", [])},
+        output_dir=state.get("output_dir"),
+        error=state.get("eval_error"),
+    )
 
     # SSE: 推送完成通知
     await _sse_broadcast(
@@ -404,21 +399,7 @@ def diagnose_error(state: EvalState) -> dict:
 
     diagnosis = _classify_error(error, work_dir)
 
-    # 更新数据库
-    task_id = state.get("task_id")
-    if task_id:
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "UPDATE evaluation_tasks SET error=?, current_step=? WHERE id=?",
-                (error, f"诊断: {diagnosis}", task_id),
-            )
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
+    # This node is synchronous; the terminal node persists the final error.
 
     return {"diagnosis": diagnosis, "current_step": f"诊断: {diagnosis}"}
 
@@ -428,6 +409,7 @@ def should_retry(state: EvalState) -> Literal["retry", "stop"]:
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 1)
     diagnosis = state.get("diagnosis", "")
+    eval_error = state.get("eval_error", "")
 
     if retry_count >= max_retries:
         return "stop"
@@ -435,9 +417,9 @@ def should_retry(state: EvalState) -> Literal["retry", "stop"]:
     # 可重试的错误类型
     retryable_keywords = [
         "connection", "timeout", "rate_limit", "429", "503", "502",
-        "临时", "网络", "超时", "重试",
+        "临时", "网络", "超时", "重试", "不可达", "超限",
     ]
-    error_lower = diagnosis.lower()
+    error_lower = f"{diagnosis} {eval_error}".lower()
     if any(kw in error_lower for kw in retryable_keywords):
         return "retry"
 
@@ -448,19 +430,13 @@ async def mark_failed(state: EvalState) -> dict:
     """标记任务失败"""
     task_id = state.get("task_id")
     error = state.get("eval_error", "")
-    if task_id:
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "UPDATE evaluation_tasks SET status='FAILED', error=?, current_step='评测失败' WHERE id=?",
-                (error, task_id),
-            )
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
+    await update_task_state(
+        task_id,
+        status=TaskStatus.FAILED,
+        current_step="评测失败",
+        error=error,
+        output_dir=state.get("output_dir"),
+    )
 
     # SSE: 推送失败通知
     await _sse_broadcast(
@@ -515,22 +491,8 @@ def _process_report_result(report, work_dir: str | None) -> tuple:
 
 
 async def _update_task_status(task_id: int | None, status: str, step: str):
-    """更新任务状态到数据库（status 统一用大写枚举名）"""
-    if not task_id:
-        return
-    try:
-        import sqlite3
-        db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'evalscope.db')
-        conn = sqlite3.connect(db_path)
-        status_upper = status.upper()
-        conn.execute(
-            "UPDATE evaluation_tasks SET status=?, current_step=?, started_at=COALESCE(started_at, datetime('now')) WHERE id=?",
-            (status_upper, step, task_id),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.warning(f"更新任务状态失败: {e}")
+    """更新任务状态到配置的业务数据库。"""
+    await update_task_state(task_id, status=status, current_step=step)
 
 
 async def _sse_broadcast(task_id: int | None, event_type: str, data: dict):
@@ -554,6 +516,7 @@ async def build_eval_workflow():
     # 添加节点
     workflow.add_node("prepare_config", prepare_config)
     workflow.add_node("validate_params", validate_params)
+    workflow.add_node("await_confirmation", await_confirmation)
     workflow.add_node("run_eval", run_eval)
     workflow.add_node("collect_results", collect_results)
     workflow.add_node("diagnose_error", diagnose_error)
@@ -567,9 +530,10 @@ async def build_eval_workflow():
     # validate_params: 校验失败 → 诊断 → 结束；校验通过 → 执行评测
     workflow.add_conditional_edges(
         "validate_params",
-        lambda state: "run_eval" if state.get("eval_success", True) else "diagnose_error",
-        {"run_eval": "run_eval", "diagnose_error": "diagnose_error"},
+        lambda state: "await_confirmation" if state.get("eval_success", True) else "diagnose_error",
+        {"await_confirmation": "await_confirmation", "diagnose_error": "diagnose_error"},
     )
+    workflow.add_edge("await_confirmation", "run_eval")
 
     # run_eval: 成功 → 收集结果；失败 → 诊断
     workflow.add_conditional_edges(
@@ -595,7 +559,7 @@ async def build_eval_workflow():
 
     return workflow.compile(
         checkpointer=checkpointer,
-        interrupt_before=["run_eval"],
+        interrupt_before=["await_confirmation"],
     )
 
 

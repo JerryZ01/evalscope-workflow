@@ -169,7 +169,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     if (newSessions.length === 0) {
       // 删完了，自动创建新会话
       saveSessions([]);
-      const newId = get().createSession();
+      get().createSession();
       return;
     }
 

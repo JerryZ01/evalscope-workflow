@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Task, Dataset, ModelType, Metric } from '@/types';
+import type { Task, TaskStatus, Dataset, ModelType, Metric } from '@/types';
 import { taskApi, type CreateTaskParams, type UpdateTaskParams } from '@/api/tasks';
 import { catalogApi } from '@/api/catalog';
 
@@ -11,14 +11,13 @@ interface TaskStore {
   error: string | null;
 
   // 动作
-  fetchTasks: (params?: { skip?: number; limit?: number; status?: string }) => Promise<void>;
+  fetchTasks: (params?: { skip?: number; limit?: number; status?: TaskStatus }) => Promise<void>;
   fetchTask: (taskId: number) => Promise<void>;
   createTask: (params: CreateTaskParams) => Promise<number>;
   updateTask: (taskId: number, data: UpdateTaskParams) => Promise<void>;
   deleteTask: (taskId: number) => Promise<void>;
   startTask: (taskId: number) => Promise<void>;
   stopTask: (taskId: number) => Promise<void>;
-  pauseTask: (taskId: number) => Promise<void>;
   resumeTask: (taskId: number) => Promise<void>;
   retryTask: (taskId: number) => Promise<void>;
   setCurrentTask: (task: Task | null) => void;
@@ -104,17 +103,6 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   stopTask: async (taskId) => {
     try {
       await taskApi.stop(taskId);
-      await get().fetchTask(taskId);
-      await get().fetchTasks();
-    } catch (error: any) {
-      set({ error: error.message });
-      throw error;
-    }
-  },
-
-  pauseTask: async (taskId) => {
-    try {
-      await taskApi.pause(taskId);
       await get().fetchTask(taskId);
       await get().fetchTasks();
     } catch (error: any) {

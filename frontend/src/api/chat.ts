@@ -78,5 +78,3 @@ export const chatApi = {
     callbacks.onDone();
   },
 };
-
-export type { ChatUsage };

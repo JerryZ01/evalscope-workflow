@@ -27,6 +27,11 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/db/evalscope.db
       - EVALSCOPE_DATASET_DIR=/app/data/datasets
       - EVALSCOPE_WORK_DIR=/app/outputs
+      - WORKFLOW_CHECKPOINT_DB=/app/data/db/evalscope_checkpoints.db
+      - SETTINGS_FILE=/app/data/db/settings.json
+      - API_AUTH_TOKEN=${API_AUTH_TOKEN:-}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-false}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["*"]}
     volumes:
       # 数据持久化：sqlite、评测输出、数据集缓存都映射到宿主目录
       - ./data/db:/app/data/db

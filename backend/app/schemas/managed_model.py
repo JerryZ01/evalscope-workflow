@@ -3,7 +3,7 @@
 """
 from typing import Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ========== 请求 Schema ==========
@@ -37,12 +37,14 @@ class ManagedModelUpdate(BaseModel):
 
 class ManagedModelResponse(BaseModel):
     """模型响应"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     model_type: str
     model_name: str
     api_url: Optional[str]
-    api_key: Optional[str]  # 实际返回时应该隐藏或加密
+    has_api_key: bool = False
     generation_config: Dict[str, Any]
     is_default: bool
     description: Optional[str]
@@ -50,10 +52,6 @@ class ManagedModelResponse(BaseModel):
     use_count: int
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
 
 class ManagedModelListResponse(BaseModel):
     """模型列表响应"""
@@ -63,12 +61,11 @@ class ManagedModelListResponse(BaseModel):
 
 class ManagedModelBriefResponse(BaseModel):
     """简要模型信息（用于下拉选择）"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     model_type: str
     model_name: str
     api_url: Optional[str]
     is_default: bool
-
-    class Config:
-        from_attributes = True

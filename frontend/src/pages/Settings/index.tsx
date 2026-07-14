@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Card, Form, Input, Button, Switch, Space, message, Divider, Alert, Spin } from 'antd';
+import { Card, Form, Input, Button, Switch, Space, message, Divider, Alert } from 'antd';
 import { settingsApi } from '@/api/settings';
-import type { Settings } from '@/api/settings';
 import { FolderOutlined, RocketOutlined, ReloadOutlined, SaveOutlined, SettingOutlined } from '@ant-design/icons';
 import PageHeader from '@/components/common/PageHeader';
 
@@ -9,7 +8,6 @@ const SettingsPage: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
-  const [settings, setSettings] = useState<Settings | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -20,7 +18,6 @@ const SettingsPage: React.FC = () => {
     try {
       const data = await settingsApi.get();
       console.log('加载设置成功:', data);
-      setSettings(data);
       // 显式设置表单字段值
       form.setFieldsValue({
         output_dir: data.output_dir,
@@ -43,7 +40,6 @@ const SettingsPage: React.FC = () => {
       console.log('保存设置:', values);
       const updated = await settingsApi.update(values);
       message.success('设置已保存');
-      setSettings(updated);
       form.setFieldsValue(updated);
     } catch (error: any) {
       console.error('保存设置失败:', error);
@@ -58,7 +54,6 @@ const SettingsPage: React.FC = () => {
       setLoading(true);
       const reset = await settingsApi.reset();
       message.success('设置已重置为默认值');
-      setSettings(reset);
       form.setFieldsValue(reset);
     } catch (error: any) {
       console.error('重置设置失败:', error);

@@ -64,74 +64,20 @@ class SSEManager:
             cls._connections[task_id].discard(q)
 
 
-@router.post("/run/{task_id}")
+@router.post("/run/{task_id}", deprecated=True)
 async def run_evaluation(
     task_id: int,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    执行评测任务
+    """Compatibility endpoint; all execution now starts through the workflow."""
+    from app.api.workflow import start_workflow
 
-    这是触发评测的端点，实际评测在后台执行
-    """
-    # 获取任务
-    result = await db.execute(
-        select(EvaluationTask).where(EvaluationTask.id == task_id)
-    )
-    task = result.scalar_one_or_none()
-
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"任务 {task_id} 不存在"
-        )
-
-    if task.status == TaskStatus.RUNNING:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="任务已在运行中"
-        )
-
-    # 允许 PENDING/COMPLETED/FAILED/CANCELLED 重新运行
-    allowed_statuses = (
-        TaskStatus.PENDING,
-        TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED
-    )
-    if task.status not in allowed_statuses:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"状态为 {task.status.value} 的任务无法启动评测"
-        )
-
-    # 更新任务状态
-    task.status = TaskStatus.RUNNING
-    task.started_at = datetime.utcnow()
-    task.progress = 0
-    task.current_step = "准备执行"
-    # 清除旧结果（支持重新执行）
-    task.results = None
-    task.logs = None
-    task.error = None
-    task.completed_at = None
-    task.duration = None
-    await db.commit()
-
-    # 创建进度回调
-    progress_callback = create_progress_callback(task_id)
-
-    # 调度后台任务（传入 task_uuid 而非 db session）
-    background_tasks.add_task(
-        run_evaluation_background,
-        task_id,
-        task.task_uuid,
-        progress_callback
-    )
+    await start_workflow(task_id, db)
 
     return {
-        "message": "评测任务已启动",
+        "message": "评测工作流已启动，等待配置确认",
         "task_id": task_id,
-        "status": "running"
+        "status": "pending_confirmation"
     }
 
 
@@ -403,7 +349,8 @@ async def get_evaluation_log(
         cmd_parts.append(f'--datasets {" ".join(task.datasets)}')
         if task.limit:
             cmd_parts.append(f'--limit {task.limit}')
-        cmd_parts.append(f'--work-dir "../outputs/{task.task_uuid}"')
+        from app.core.config import settings
+        cmd_parts.append(f'--work-dir "{os.path.join(settings.EVALSCOPE_WORK_DIR, task.task_uuid)}"')
         cmd_parts.append(f'--eval-backend {task.engine or "Native"}')
         cmd_parts.append(f'--eval-batch-size {task.eval_batch_size}')
         # 判断是否需要沙箱（代码执行类评测）

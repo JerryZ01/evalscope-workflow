@@ -17,7 +17,7 @@ class EvalState(TypedDict, total=False):
     model_name: str
     model_type: str
     model_url: Optional[str]
-    model_key: Optional[str]
+    has_model_key: bool
     generation_config: dict
 
     # 数据集配置

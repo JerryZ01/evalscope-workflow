@@ -51,7 +51,7 @@ START → prepare_config → validate_params → [interrupt: 人工确认] → r
 
 ### 人工确认机制
 
-- 使用 `interrupt_before=["run_eval"]`，在执行评测前暂停
+- 使用 `interrupt_before=["await_confirmation"]`，在一次性确认节点前暂停；自动重试直接回到 `run_eval`
 - 用户通过 `POST /api/workflow/{task_id}/confirm` 提交确认
 - 确认时可以携带修改后的配置（`modifications` 字段）
 - 确认后评测在后台异步执行（`asyncio.create_task`），不阻塞 HTTP 请求
@@ -76,7 +76,7 @@ POST /api/workflow/{task_id}/cancel    — 取消工作流
 
 ### 关键技术决策
 
-1. **Checkpoint 持久化**：`langgraph-checkpoint-sqlite` v3.1.0，用 `AsyncSqliteSaver` + `aiosqlite.connect()` 直接构造（不用 `from_conn_string` 上下文管理器）。SQLite 文件：`backend/evalscope_checkpoints.db`。
+1. **Checkpoint 持久化**：`langgraph-checkpoint-sqlite` v3.1.0，用 `AsyncSqliteSaver` + `aiosqlite.connect()` 直接构造。SQLite 文件由 `WORKFLOW_CHECKPOINT_DB` 配置，并且不保存 API Key。
 
 2. **长时间节点（run_eval）处理**：
    - 节点内部用 `multiprocessing.Process` 执行 `run_task()`（与现有 `runner.py` 一致）
@@ -112,7 +112,7 @@ curl -X POST http://localhost:5900/api/workflow/20/start
 curl http://localhost:5900/api/workflow/20/status
 → {
     "waiting_for_confirmation": true,
-    "next_step": "run_eval",
+    "next_step": "await_confirmation",
     "current_step": "参数校验通过",
     "config_summary": "模型: deepseek-v3-2-251201\n数据集: gsm8k\n引擎: native\n样本限制: 10"
   }
@@ -137,8 +137,8 @@ curl http://localhost:5900/api/workflow/20/status
 |------|--------|----------|
 | 长时间 run_eval 节点崩溃后重跑 | 中 | evalscope use_cache 断点续测 |
 | langgraph-checkpoint-sqlite 未生产验证 | 低 | SQLite 事务性写入，单机场景足够 |
-| 工作流 API 与现有任务 API 并行维护 | 中 | 工作流 API 是新端点，不动现有 /api/eval 和 /api/tasks |
-| interrupt_before 重试时也会暂停 | 低 | 目前 max_retries=1 且大多数错误不可重试，后续可优化 |
+| 兼容入口产生行为漂移 | 低 | `/api/eval/run` 和 `/api/tasks/{id}/start` 均委托统一工作流 |
+| interrupt_before 重试时也会暂停 | 已解决 | 一次性 `await_confirmation` 节点与重试边分离 |
 
 ---
 

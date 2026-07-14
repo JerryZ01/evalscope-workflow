@@ -28,13 +28,20 @@ class Settings(BaseSettings):
     EVALSCOPE_DATASET_DIR: str = "./data/datasets"
     EVALSCOPE_WORK_DIR: str = "./data/work"
     EVALSCOPE_USE_CACHE: bool = True
+    WORKFLOW_CHECKPOINT_DB: str = "./evalscope_checkpoints.db"
+    SETTINGS_FILE: str = "./settings.json"
 
     # Celery 配置
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
 
     # CORS
-    CORS_ORIGINS: list = ["*"]
+    CORS_ORIGINS: list[str] = ["*"]
+
+    # 可选共享令牌鉴权。留空时保持本地开发兼容。
+    API_AUTH_TOKEN: str = ""
+    SESSION_COOKIE_SECURE: bool = False
+    SESSION_MAX_AGE_SECONDS: int = 86400
 
     # Langfuse 可观测性（v4 SDK 读 LANGFUSE_HOST 环境变量）
     LANGFUSE_PUBLIC_KEY: str = ""

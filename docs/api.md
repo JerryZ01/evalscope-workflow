@@ -12,14 +12,14 @@
 | `model_name` | String(255) | 模型标识名 |
 | `model_type` | String(50) | 模型类型：`openai_api`, `llm_ckpt`, `text2image`, `mock` |
 | `model_url` | String(500) | API 端点 URL |
-| `model_key` | String(255) | API Key |
+| `model_key` | String(255) | API Key（仅服务端使用，API 响应只返回 `has_model_key`） |
 | `generation_config` | JSON | 生成参数：`temperature`, `max_tokens`, `top_p`, `top_k` |
 | `datasets` | JSON | 数据集列表，如 `["gsm8k", "mmlu"]` |
 | `dataset_args` | JSON | 数据集参数（per-dataset 配置） |
 | `limit` | Integer | 样本数限制，null 表示全部 |
 | `eval_batch_size` | Integer | 评测批次大小，默认 1 |
 | `engine` | String(50) | 评测引擎：`native`, `opencompass`, `vlmeval`, `rag_eval` |
-| `status` | Enum | 任务状态：`pending`, `running`, `paused`, `completed`, `failed`, `cancelled` |
+| `status` | Enum | 任务状态：`pending`, `running`, `completed`, `failed`, `cancelled` |
 | `progress` | Integer | 进度 0-100 |
 | `current_step` | String(100) | 当前步骤描述 |
 | `results` | JSON | 评测结果：`{score, metrics}` |
@@ -39,7 +39,7 @@
 | `model_type` | String(50) | 模型类型 |
 | `model_name` | String(255) | 模型标识 |
 | `api_url` | String(500) | API URL |
-| `api_key` | String(255) | API Key |
+| `api_key` | String(255) | API Key（仅服务端使用，API 响应只返回 `has_api_key`） |
 | `generation_config` | JSON | 默认生成配置 |
 | `is_default` | Boolean | 是否默认模型 |
 | `use_count` | Integer | 使用次数统计 |
@@ -137,12 +137,12 @@ DELETE /api/tasks/{task_id}
 {"id": 8, "message": "任务删除成功"}
 ```
 
-### 启动任务（仅更新状态）
+### 启动任务（兼容入口）
 
 ```
 POST /api/tasks/{task_id}/start
-注意：此接口仅更新状态为 running，不触发实际评测。
-      触发评测使用 POST /api/eval/run/{task_id}
+注意：此接口已废弃，内部委托给统一工作流并进入等待确认状态。
+      新客户端使用 POST /api/workflow/{task_id}/start。
 ```
 
 ### 停止任务
@@ -152,18 +152,11 @@ POST /api/tasks/{task_id}/stop
 状态: running → cancelled，计算 duration
 ```
 
-### 暂停任务
-
-```
-POST /api/tasks/{task_id}/pause
-状态: running → paused
-```
-
-### 恢复任务
+### 断点续测
 
 ```
 POST /api/tasks/{task_id}/resume
-状态: paused → running
+状态: failed/cancelled → pending，并设置 EvalScope use_cache
 ```
 
 ### 重试任务
@@ -175,26 +168,24 @@ POST /api/tasks/{task_id}/retry
 
 ---
 
-## 评测执行 `/api/eval`
+## 评测执行 `/api/workflow`
 
 ### 触发评测（核心接口）
 
 ```
-POST /api/tasks/{task_id}/start        ← 状态改为 running
-POST /api/eval/run/{task_id}           ← 触发后台执行（立即返回）
+POST /api/workflow/{task_id}/start     ← 准备配置并暂停等待确认
+POST /api/workflow/{task_id}/confirm   ← 返回 202，后台执行评测
 
 响应:
 {
-  "message": "评测任务已启动",
+  "message": "评测已开始执行",
   "task_id": 8,
-  "status": "running"
+  "status": "confirmed"
 }
 
-实际执行在 FastAPI BackgroundTask 中异步进行，包含：
-1. 清除旧 results/logs/error（支持重新执行）
-2. 创建进度回调 create_progress_callback()
-3. 执行 EvalScopeRunner.run_evaluation()
-4. 完成后更新 status/score/results/duration
+实际执行由 LangGraph 后台任务编排，EvalScope 在独立子进程运行；状态、结果和日志统一通过 SQLAlchemy 写入配置的 `DATABASE_URL`。
+
+`POST /api/eval/run/{task_id}` 保留为废弃兼容入口，也会委托给上述工作流，不再直接启动第二套执行器。
 ```
 
 ### 获取日志

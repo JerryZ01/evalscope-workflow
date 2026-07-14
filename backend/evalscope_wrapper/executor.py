@@ -42,7 +42,10 @@ def _sanitize(value: Any) -> Any:
 class EvalScopeExecutor:
     """EvalScope 执行器"""
 
-    def __init__(self, output_dir: str = '../outputs'):
+    def __init__(self, output_dir: Optional[str] = None):
+        if output_dir is None:
+            from app.core.config import settings
+            output_dir = settings.EVALSCOPE_WORK_DIR
         self.output_dir = output_dir
         self._running_tasks: Dict[str, threading.Thread] = {}
         self._task_status: Dict[str, Dict[str, Any]] = {}

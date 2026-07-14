@@ -1,25 +1,24 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Row, Col, Statistic, Progress, Spin, Tag, Button, Space, Table, Descriptions, message, Empty, Popconfirm, Alert } from 'antd';
-import { PlayCircleOutlined, StopOutlined, ArrowLeftOutlined, ReloadOutlined, PauseCircleOutlined, DeleteOutlined, RedoOutlined, EditOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Statistic, Progress, Spin, Tag, Button, Space, Descriptions, message, Empty, Popconfirm, Alert } from 'antd';
+import { PlayCircleOutlined, StopOutlined, ArrowLeftOutlined, ReloadOutlined, DeleteOutlined, RedoOutlined, EditOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useTaskStore } from '@/stores';
 import { resultsApi } from '@/api/results';
 import { workflowApi } from '@/api/workflow';
-import type { VisualizationData, Task, WorkflowStatus } from '@/types';
-import { Column, Radar, Line } from '@ant-design/plots';
+import type { VisualizationData, WorkflowStatus } from '@/types';
+import { Column, Radar } from '@ant-design/plots';
 import EditTaskModal from './EditTaskModal';
 
 const TaskDetail: React.FC = () => {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
-  const { currentTask, fetchTask, stopTask, pauseTask, deleteTask, retryTask, loading, setCurrentTask } = useTaskStore();
+  const { currentTask, fetchTask, stopTask, deleteTask, retryTask, loading, setCurrentTask } = useTaskStore();
 
   const [vizData, setVizData] = useState<VisualizationData | null>(null);
   const [vizLoading, setVizLoading] = useState(false);
   const [taskLogs, setTaskLogs] = useState<string>("");
   const [actualCommand, setActualCommand] = useState<string>("");
   const [logsLoading, setLogsLoading] = useState(false);
-  const [sseConnected, setSseConnected] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportKey, setReportKey] = useState(0);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -106,7 +105,6 @@ const TaskDetail: React.FC = () => {
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
-      setSseConnected(true);
       sseConnectedRef.current = true;
       console.log('SSE: 连接已打开');
     };
@@ -178,7 +176,6 @@ const TaskDetail: React.FC = () => {
 
     eventSource.onerror = (error) => {
       console.error('SSE: 连接错误:', error);
-      setSseConnected(false);
       sseConnectedRef.current = false;
       // 断开重连
       eventSource.close();
@@ -211,7 +208,6 @@ const TaskDetail: React.FC = () => {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
-      setSseConnected(false);
       sseConnectedRef.current = false;
     };
   }, [taskId, effectiveStatus]);
@@ -219,6 +215,7 @@ const TaskDetail: React.FC = () => {
   // 加载日志
   const loadLogs = async (forceFullUpdate: boolean = false) => {
     if (!taskId) return;
+    setLogsLoading(true);
     try {
       const response = await fetch(`/api/eval/log/${taskId}`);
       const data = await response.json();
@@ -245,6 +242,8 @@ const TaskDetail: React.FC = () => {
       }
     } catch (error) {
       console.error("loadLogs: 加载失败:", error);
+    } finally {
+      setLogsLoading(false);
     }
   };
 
@@ -348,33 +347,6 @@ const TaskDetail: React.FC = () => {
     }
   };
 
-  const handlePause = async () => {
-    if (!taskId) return;
-    try {
-      await pauseTask(Number(taskId));
-      message.success('任务已暂停');
-      fetchTask(Number(taskId));
-    } catch (error: any) {
-      message.error(error.message || '暂停失败');
-    }
-  };
-
-  const handleResume = async () => {
-    if (!taskId) return;
-    try {
-      await workflowApi.start(Number(taskId));
-      message.info('工作流已启动，正在准备配置...');
-      const status = await workflowApi.getStatus(Number(taskId));
-      setWorkflowStatus(status);
-      if (status.waiting_for_confirmation) {
-        startWorkflowPolling(Number(taskId));
-      }
-      fetchTask(Number(taskId));
-    } catch (error: any) {
-      message.error(error.message || '恢复失败');
-    }
-  };
-
   const handleDelete = async () => {
     if (!taskId) return;
     try {
@@ -409,7 +381,6 @@ const TaskDetail: React.FC = () => {
       pending: { color: 'default', label: '待执行' },
       confirming: { color: 'warning', label: '等待确认' },
       running: { color: 'processing', label: '运行中' },
-      paused: { color: 'warning', label: '已暂停' },
       completed: { color: 'success', label: '已完成' },
       failed: { color: 'error', label: '失败' },
       cancelled: { color: 'default', label: '已取消' },
@@ -535,13 +506,6 @@ const TaskDetail: React.FC = () => {
         {effectiveStatus === 'running' && (
           <>
             <Button
-              type="primary"
-              icon={<PauseCircleOutlined />}
-              onClick={handlePause}
-            >
-              暂停
-            </Button>
-            <Button
               danger
               icon={<StopOutlined />}
               onClick={handleStop}
@@ -560,30 +524,6 @@ const TaskDetail: React.FC = () => {
                 停止并删除
               </Button>
             </Popconfirm>
-          </>
-        )}
-        {effectiveStatus === 'paused' && (
-          <>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={handleResume}
-            >
-              恢复
-            </Button>
-            <Button
-              icon={<EditOutlined />}
-              onClick={() => navigate(`/tasks/${taskId}/edit`)}
-            >
-              编辑参数
-            </Button>
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              onClick={handleDelete}
-            >
-              删除
-            </Button>
           </>
         )}
         {effectiveStatus === 'completed' && (

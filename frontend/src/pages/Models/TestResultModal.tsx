@@ -22,7 +22,9 @@ const JsonBlock: React.FC<{ value: any; maxHeight?: number }> = ({ value, maxHei
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(text);
-    } catch {}
+    } catch {
+      // Clipboard access can be unavailable outside secure browser contexts.
+    }
   };
   return (
     <div style={{ position: 'relative' }}>

@@ -79,25 +79,19 @@ const TaskCreate: React.FC = () => {
   }, [searchParams]);
 
   // ========== 模型选择处理 ==========
-  const handleSelectManagedModel = async (modelId: number) => {
+  const handleSelectManagedModel = (modelId: number) => {
     setSelectedManagedModelId(modelId);
-    try {
-      const model = await modelApi.get(modelId);
-      console.log('选择已管理模型:', model);
-
-      // 直接更新状态，不依赖 Form
+    const model = managedModels.find(item => item.id === modelId);
+    if (model) {
       setFormData(prev => ({
         ...prev,
         modelConfig: {
           model_name: model.model_name,
           model_type: model.model_type,
           model_url: model.api_url || undefined,
-          model_key: model.api_key || undefined,
+          model_key: undefined,
         }
       }));
-    } catch (error) {
-      console.error('获取模型详情失败:', error);
-      message.error('获取模型详情失败');
     }
   };
 

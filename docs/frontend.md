@@ -81,7 +81,6 @@ interface TaskStore {
   deleteTask: (id) => Promise<void>;
   startTask: (id) => Promise<void>;
   stopTask: (id) => Promise<void>;
-  pauseTask: (id) => Promise<void>;
   resumeTask: (id) => Promise<void>;
   retryTask: (id) => Promise<void>;
   setCurrentTask: (task) => void;
@@ -249,13 +248,13 @@ client.interceptors.response.use(
                     ┌──────────────┐
             ┌───────│   RUNNING    │───────┐
             │       └──────────────┘       │
-            │ 暂停          完成            │ 停止
-            ▼             ▼                ▼
-     ┌──────────┐  ┌────────────┐  ┌──────────┐
-     │  PAUSED  │  │ COMPLETED  │  │CANCELLED │
-     └────┬─────┘  └────────────┘  └────┬─────┘
-          │ 恢复                        │ 重试/重新执行
-          └────────────────────────────▼───────┘
+            │             完成            │ 停止
+            │             ▼               ▼
+            │      ┌────────────┐  ┌──────────┐
+            │      │ COMPLETED  │  │CANCELLED │
+            │      └────────────┘  └────┬─────┘
+            │                           │ 重试/续测
+            └───────────────────────────▼───────┘
                        ┌──────────────┐
                        │   PENDING    │
                        └──────────────┘

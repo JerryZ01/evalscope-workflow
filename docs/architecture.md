@@ -46,15 +46,14 @@ FastAPI App
 │   ├── GET    /{id}                详情
 │   ├── PATCH  /{id}                更新
 │   ├── DELETE /{id}                删除
-│   ├── POST   /{id}/start          [已废弃] 仅改状态不执行
+│   ├── POST   /{id}/start          [已废弃] 委托统一工作流
 │   ├── POST   /{id}/stop           停止（取消子进程）
-│   ├── POST   /{id}/pause          暂停
 │   ├── POST   /{id}/resume         续测（设 use_cache）
 │   ├── POST   /{id}/retry          重试（重置状态）
 │   └── GET    /{id}/status         状态查询
 │
-├── /api/eval           — 旧版评测执行
-│   ├── POST   /run/{id}            直接启动评测（无确认）
+├── /api/eval           — 实时事件与兼容入口
+│   ├── POST   /run/{id}            [已废弃] 委托统一工作流
 │   ├── GET    /stream/{id}         SSE 实时进度推送
 │   ├── GET    /log/{id}            日志查询
 │   └── GET    /report/{id}         报告查询
@@ -119,7 +118,7 @@ graph.ainvoke(initial_state)
  └──────┬──────┘
         │
         ▼
-  interrupt_before=["run_eval"]
+  interrupt_before=["await_confirmation"]
   工作流暂停，等待人工确认
         │
         ▼
@@ -183,31 +182,16 @@ asyncio.create_task(graph.ainvoke(Command(resume=True)))
   前端 fetchTask() 刷新结果
 ```
 
-### 3.3 评测执行流程（旧版 eval 路径 — 仅恢复暂停任务时使用）
+### 3.3 旧版入口兼容
 
 ```
-evalApi.run(taskId)
-        │
-        ▼
 POST /api/eval/run/{id}
         │
         ▼
-更新 DB: status=RUNNING
+start_workflow(taskId)
         │
         ▼
-BackgroundTasks → EvalScopeRunner.run_evaluation()
-        │
-        ▼
-子进程执行 evalscope
-        │
-        ├── 进度回调 → SSEManager.broadcast("progress")
-        ├── 日志回调 → SSEManager.broadcast("logs")
-        │
-        ▼
-完成 → SSEManager.broadcast("complete")
-        │
-        ▼
-更新 DB: status=COMPLETED/FAILED
+与 /api/workflow/{id}/start 完全相同，等待人工确认
 ```
 
 ### 3.4 停止/重试/续测流程
@@ -256,7 +240,7 @@ DB task.status          workflowStatus.waiting_for_confirmation
 ├─────────────┼──────────────────────────────┼──────────────────────────────┤
 │  pending    │  启动                         │  启动 / 编辑参数 / 删除       │
 │  confirming │  确认 / 取消                  │  确认执行 / 取消 / 修改参数   │
-│  running    │  停止 / 删除                  │  暂停 / 停止 / 停止并删除    │
+│  running    │  停止 / 删除                  │  停止 / 停止并删除           │
 │  completed  │  重试 / 删除                  │  删除                        │
 │  failed     │  续测 / 重试 / 删除           │  重试 / 编辑参数 / 删除       │
 │  cancelled  │  续测 / 重试 / 删除           │  重试 / 编辑参数 / 删除       │
@@ -361,24 +345,15 @@ agent.astream_events() → 流式输出
 └─────────────────────────────────────────┘
 ```
 
-## 九、两套评测路径对比
+## 九、统一执行与数据访问
 
-```
-                    旧版 eval API              新版 workflow API
-                    ──────────────             ─────────────────
-启动方式            POST /eval/run/{id}        POST /workflow/{id}/start
-人工确认            无                         interrupt_before run_eval
-错误诊断            无                         diagnose_error 自动分类
-自动重试            无                         should_retry 条件路由
-状态持久化          仅 DB                      DB + LangGraph Checkpoint
-SSE 实时进度        有（SSEManager）           无（直接写 DB）
-执行方式            EvalScopeRunner             multiprocessing.Process
-前端使用场景        TaskDetail handleResume     启动/重试/确认/取消
-```
+所有启动入口最终进入 `/api/workflow`。业务状态通过 `app.services.task_state`
+和 SQLAlchemy 写入 `DATABASE_URL`；评测子进程不直接访问数据库，只通过队列返回结果和日志。
+工作流 checkpoint 使用 `WORKFLOW_CHECKPOINT_DB`，不保存 API Key。升级到安全 schema v2
+时会清理旧 checkpoint，避免历史明文密钥残留。
 
 ## 十、已知架构问题
 
-1. **SSE 与 Workflow 脱节**：workflow 路径的 run_eval 不调用 SSEManager，前端无法实时获取进度，只能 3 秒轮询
-2. **数据库访问不一致**：workflow 节点用同步 sqlite3，API 层用 SQLAlchemy AsyncSession
-3. **handleResume 不一致**：TaskDetail 走 evalApi.run，TaskList 走 workflowApi.start
-4. **轮询开销**：confirming 状态持续 3 秒轮询，列表页对 pending 任务批量查询
+1. **单机执行模型**：后台协程、子进程注册表和 SSE 连接都在进程内，不支持多 worker 横向扩展
+2. **at-least-once 语义**：服务在长时间 `run_eval` 中崩溃后，需要依赖 EvalScope cache 续测
+3. **轮询开销**：confirming 状态持续 3 秒轮询，列表页对 pending 任务批量查询

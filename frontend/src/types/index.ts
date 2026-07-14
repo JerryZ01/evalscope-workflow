@@ -5,7 +5,7 @@ export interface ManagedModel {
   model_type: string;
   model_name: string;
   api_url?: string;
-  api_key?: string;
+  has_api_key: boolean;
   generation_config: Record<string, any>;
   is_default: boolean;
   description?: string;
@@ -33,6 +33,7 @@ export interface Task {
   model_name: string;
   model_type: string;
   model_url?: string;
+  has_model_key: boolean;
   generation_config: GenerationConfig;
   datasets: string[];
   dataset_args: Record<string, any>;
@@ -52,6 +53,8 @@ export interface Task {
   started_at?: string;
   completed_at?: string;
   duration?: number;
+  error?: string;
+  output_dir?: string;
 }
 
 export type TaskStatus = 'pending' | 'confirming' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -75,6 +78,7 @@ export interface GenerationConfig {
   top_p?: number;
   top_k?: number;
   stop?: string[];
+  stream?: boolean;
 }
 
 export interface EvaluationResults {

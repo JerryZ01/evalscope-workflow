@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import tasks, catalog, eval as eval_api, results, models, settings, chat, workflow
 from app.db.database import engine, Base
 from app.core.config import settings as app_settings
+from app.core.security import ApiAuthMiddleware, router as auth_router
 
 # 配置日志
 logging.basicConfig(
@@ -52,11 +53,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Optional authentication is inside CORS so even 401 responses carry CORS headers.
+app.add_middleware(ApiAuthMiddleware)
+
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制域名
-    allow_credentials=True,
+    allow_origins=app_settings.CORS_ORIGINS,
+    allow_credentials=app_settings.CORS_ORIGINS != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -70,6 +74,7 @@ app.include_router(models.router, prefix="/api/models", tags=["模型管理"])
 app.include_router(settings.router, prefix="/api/settings", tags=["系统设置"])
 app.include_router(chat.router, prefix="/api/chat", tags=["AI 助手"])
 app.include_router(workflow.router, prefix="/api/workflow", tags=["评测工作流"])
+app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
 
 # 注册 settings（配置对象）
 app.state.settings = app_settings

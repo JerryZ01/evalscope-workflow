@@ -174,7 +174,7 @@ const TaskEdit: React.FC = () => {
       // 重试任务（会重置状态为 pending）
       try {
         await useTaskStore.getState().retryTask(Number(taskId));
-      } catch (e) {
+      } catch {
         // 如果重试失败，可能状态不支持，直接启动
       }
 

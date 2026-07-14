@@ -370,3 +370,33 @@ body {
     width: 4px;
   }
 }
+/* Authentication gate */
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #f5f7fb;
+}
+
+.auth-card {
+  width: min(400px, 100%);
+  text-align: center;
+  border-radius: 8px;
+}
+
+.auth-card .ant-form {
+  margin-top: 24px;
+  text-align: left;
+}
+
+.auth-card .ant-alert {
+  margin-top: 16px;
+  text-align: left;
+}
+
+.auth-icon {
+  color: #1890ff;
+  font-size: 32px;
+}

@@ -219,7 +219,7 @@ const TaskList: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: TaskStatus, record: Task) => getStatusTag(getEffectiveStatus(record)),
+      render: (_status: TaskStatus, record: Task) => getStatusTag(getEffectiveStatus(record)),
     },
     {
       title: '进度',

@@ -65,6 +65,12 @@ evalscope-workflow/
 | `DATABASE_URL` | sqlite | 默认 sqlite 即可；要切 PostgreSQL 改这里 + requirements |
 | `EVALSCOPE_USE_CACHE` | true | 数据集复用缓存，加快重复评测 |
 | `CORS_ORIGINS` | `["*"]` | **生产建议改成具体前端域名**，避免任意来源调 API |
+| `WORKFLOW_CHECKPOINT_DB` | `/app/data/db/evalscope_checkpoints.db` | LangGraph checkpoint 持久化路径 |
+| `SETTINGS_FILE` | `/app/data/db/settings.json` | Web 设置持久化文件，位于数据卷内 |
+| `API_AUTH_TOKEN` | 空 | 共享访问令牌；生产环境必须设置强随机值 |
+| `SESSION_COOKIE_SECURE` | false | HTTPS 部署时设为 true |
+
+生产部署可使用 `openssl rand -hex 32` 生成 `API_AUTH_TOKEN`。启用后，前端会先显示登录界面，认证成功后使用 HttpOnly、SameSite=Strict Cookie；SSE 不需要在 URL 中携带令牌。
 
 ## 五、常用运维命令
 
@@ -129,7 +135,7 @@ docker compose logs -f backend
 
 ### Q3: 模型管理里的 API Key 怎么存的？安全吗？
 
-存在 sqlite 里明文。**生产环境建议**：
+密钥保存在业务数据库中，但任务、模型和工作流状态接口不会返回密钥，只返回是否已配置。LangGraph checkpoint 也不保存密钥。当前数据库静态加密仍应由部署层负责：
 - 数据库文件所在目录权限设 `chmod 700 data/db`
 - 不要把 `data/` 提交进 git（默认已通过 `.gitignore` 排除）
 - 如果有更高安全要求，可改用 Vault / AWS Secrets Manager 注入到 env
@@ -139,7 +145,7 @@ docker compose logs -f backend
 1. `.env` 把 `CORS_ORIGINS` 改成你的具体前端域名
 2. 在 docker-compose 外层加一个反代（nginx / Caddy / Traefik）做 HTTPS 终结
 3. `BACKEND_PORT` 注释掉，**后端不暴露给宿主**，只通过容器内 network 给 frontend
-4. 开启基础认证或 SSO（当前平台无内置鉴权，需在反代层做）
+4. 设置强随机 `API_AUTH_TOKEN`，并在 HTTPS 环境设置 `SESSION_COOKIE_SECURE=true`
 
 ### Q5: 容器一直 unhealthy？
 

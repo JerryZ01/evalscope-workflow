@@ -3,7 +3,7 @@
 """
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models import TaskStatus
 
@@ -32,7 +32,7 @@ class TaskCreateSchema(BaseModel):
     generation_config: Dict[str, Any] = Field(default_factory=dict)
 
     # 数据集配置
-    datasets: List[str] = Field(..., min_items=1)
+    datasets: List[str] = Field(..., min_length=1)
     dataset_args: Dict[str, Any] = Field(default_factory=dict)
     limit: Optional[int] = Field(None, ge=1)
     eval_batch_size: int = Field(default=3, ge=1, le=10)
@@ -60,7 +60,7 @@ class TaskUpdateSchema(BaseModel):
     generation_config: Optional[Dict[str, Any]] = None
 
     # 数据集配置
-    datasets: Optional[List[str]] = Field(None, min_items=1)
+    datasets: Optional[List[str]] = Field(None, min_length=1)
     dataset_args: Optional[Dict[str, Any]] = None
     limit: Optional[int] = Field(None, ge=1)
     eval_batch_size: Optional[int] = Field(None, ge=1)
@@ -81,6 +81,8 @@ class TaskStatusSchema(BaseModel):
 
 class TaskListItemSchema(BaseModel):
     """任务列表项"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     task_uuid: str
     name: str
@@ -95,14 +97,10 @@ class TaskListItemSchema(BaseModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
-
-
 class TaskDetailSchema(TaskListItemSchema):
     """任务详情"""
     model_url: Optional[str]
-    model_key: Optional[str]
+    has_model_key: bool = False
     generation_config: Dict[str, Any]
     dataset_args: Dict[str, Any]
     limit: Optional[int]
@@ -113,6 +111,8 @@ class TaskDetailSchema(TaskListItemSchema):
     results: Optional[Dict[str, Any]]
     report_path: Optional[str]
     logs: Optional[str]
+    error: Optional[str] = None
+    output_dir: Optional[str] = None
     duration: Optional[float]
 
 
