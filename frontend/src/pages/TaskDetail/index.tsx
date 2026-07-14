@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Row, Col, Statistic, Progress, Spin, Tag, Button, Space, Table, Descriptions, message, Empty, Popconfirm } from 'antd';
-import { PlayCircleOutlined, StopOutlined, ArrowLeftOutlined, ReloadOutlined, PauseCircleOutlined, DeleteOutlined, RedoOutlined, EditOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Statistic, Progress, Spin, Tag, Button, Space, Table, Descriptions, message, Empty, Popconfirm, Alert } from 'antd';
+import { PlayCircleOutlined, StopOutlined, ArrowLeftOutlined, ReloadOutlined, PauseCircleOutlined, DeleteOutlined, RedoOutlined, EditOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useTaskStore } from '@/stores';
-import { resultsApi, evalApi } from '@/api/results';
-import type { VisualizationData, Task } from '@/types';
+import { resultsApi } from '@/api/results';
+import { workflowApi } from '@/api/workflow';
+import type { VisualizationData, Task, WorkflowStatus } from '@/types';
 import { Column, Radar, Line } from '@ant-design/plots';
 import EditTaskModal from './EditTaskModal';
 
@@ -22,6 +23,8 @@ const TaskDetail: React.FC = () => {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportKey, setReportKey] = useState(0);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   // SSE 连接引用
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -29,6 +32,8 @@ const TaskDetail: React.FC = () => {
   const logContainerRef = useRef<HTMLPreElement | null>(null);
   // SSE 连接状态引用（避免闭包捕获过期值）
   const sseConnectedRef = useRef(false);
+  // 工作流状态轮询定时器
+  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (taskId) {
@@ -44,6 +49,49 @@ const TaskDetail: React.FC = () => {
       loadReportHtml();
     }
   }, [currentTask?.status, taskId]);
+
+  // 查询工作流状态（pending 任务可能正在等待确认）
+  useEffect(() => {
+    if (currentTask?.status === 'pending' && taskId) {
+      workflowApi.getStatus(Number(taskId)).then(status => {
+        setWorkflowStatus(status);
+        if (status.waiting_for_confirmation) {
+          startWorkflowPolling(Number(taskId));
+        }
+      }).catch(() => {
+        setWorkflowStatus(null);
+      });
+    }
+    return () => stopWorkflowPolling();
+  }, [currentTask?.status, taskId]);
+
+  // 计算 UI 有效状态
+  const effectiveStatus = currentTask?.status === 'pending' && workflowStatus?.waiting_for_confirmation
+    ? 'confirming' as const
+    : currentTask?.status;
+
+  const startWorkflowPolling = (id: number) => {
+    if (pollingTimerRef.current) return;
+    pollingTimerRef.current = setInterval(async () => {
+      try {
+        const status = await workflowApi.getStatus(id);
+        setWorkflowStatus(status);
+        if (!status.waiting_for_confirmation) {
+          stopWorkflowPolling();
+          fetchTask(id);
+        }
+      } catch (e) {
+        console.error('工作流状态轮询失败:', e);
+      }
+    }, 3000);
+  };
+
+  const stopWorkflowPolling = () => {
+    if (pollingTimerRef.current) {
+      clearInterval(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+  };
 
   // 建立 SSE 连接
   const connectSSE = useCallback(() => {
@@ -150,7 +198,7 @@ const TaskDetail: React.FC = () => {
     if (!taskId || !currentTask) return;
 
     // 运行中的任务建立 SSE 连接
-    if (currentTask.status === 'running' || currentTask.status === 'pending') {
+    if (effectiveStatus === 'running') {
       connectSSE();
     }
 
@@ -166,7 +214,7 @@ const TaskDetail: React.FC = () => {
       setSseConnected(false);
       sseConnectedRef.current = false;
     };
-  }, [taskId, currentTask?.status]);
+  }, [taskId, effectiveStatus]);
 
   // 加载日志
   const loadLogs = async (forceFullUpdate: boolean = false) => {
@@ -233,11 +281,45 @@ const TaskDetail: React.FC = () => {
   const handleStart = async () => {
     if (!taskId) return;
     try {
-      await evalApi.run(Number(taskId));
-      message.success('任务已启动');
+      await workflowApi.start(Number(taskId));
+      message.info('工作流已启动，正在准备配置...');
+      const status = await workflowApi.getStatus(Number(taskId));
+      setWorkflowStatus(status);
+      if (status.waiting_for_confirmation) {
+        startWorkflowPolling(Number(taskId));
+      }
       fetchTask(Number(taskId));
     } catch (error: any) {
       message.error(error.message || '启动失败');
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!taskId) return;
+    setConfirming(true);
+    try {
+      await workflowApi.confirm(Number(taskId));
+      stopWorkflowPolling();
+      setWorkflowStatus(null);
+      message.success('评测已开始执行');
+      fetchTask(Number(taskId));
+    } catch (error: any) {
+      message.error(error.message || '确认失败');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const handleCancelWorkflow = async () => {
+    if (!taskId) return;
+    try {
+      await workflowApi.cancel(Number(taskId));
+      stopWorkflowPolling();
+      setWorkflowStatus(null);
+      message.success('工作流已取消');
+      fetchTask(Number(taskId));
+    } catch (error: any) {
+      message.error(error.message || '取消失败');
     }
   };
 
@@ -280,8 +362,13 @@ const TaskDetail: React.FC = () => {
   const handleResume = async () => {
     if (!taskId) return;
     try {
-      await evalApi.run(Number(taskId));
-      message.success('任务已恢复并启动');
+      await workflowApi.start(Number(taskId));
+      message.info('工作流已启动，正在准备配置...');
+      const status = await workflowApi.getStatus(Number(taskId));
+      setWorkflowStatus(status);
+      if (status.waiting_for_confirmation) {
+        startWorkflowPolling(Number(taskId));
+      }
       fetchTask(Number(taskId));
     } catch (error: any) {
       message.error(error.message || '恢复失败');
@@ -303,13 +390,16 @@ const TaskDetail: React.FC = () => {
     if (!taskId) return;
     try {
       await retryTask(Number(taskId));
-      // 自动启动评测
-      await evalApi.run(Number(taskId));
-      message.success('评测已自动启动');
+      await workflowApi.start(Number(taskId));
+      const status = await workflowApi.getStatus(Number(taskId));
+      setWorkflowStatus(status);
+      if (status.waiting_for_confirmation) {
+        startWorkflowPolling(Number(taskId));
+      }
+      message.info('工作流已重新启动');
       fetchTask(Number(taskId));
     } catch (error: any) {
       message.error(error.message || '重试失败');
-      // 出错时也刷新最新状态，避免显示不一致
       fetchTask(Number(taskId));
     }
   };
@@ -317,6 +407,7 @@ const TaskDetail: React.FC = () => {
   const getStatusTag = (status: string) => {
     const config: Record<string, { color: string; label: string }> = {
       pending: { color: 'default', label: '待执行' },
+      confirming: { color: 'warning', label: '等待确认' },
       running: { color: 'processing', label: '运行中' },
       paused: { color: 'warning', label: '已暂停' },
       completed: { color: 'success', label: '已完成' },
@@ -386,7 +477,7 @@ const TaskDetail: React.FC = () => {
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
           返回列表
         </Button>
-        {currentTask.status === 'pending' && (
+        {effectiveStatus === 'pending' && (
           <>
             <Button
               type="primary"
@@ -413,7 +504,35 @@ const TaskDetail: React.FC = () => {
             </Popconfirm>
           </>
         )}
-        {currentTask.status === 'running' && (
+        {effectiveStatus === 'confirming' && (
+          <>
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              onClick={handleConfirm}
+              loading={confirming}
+            >
+              确认执行
+            </Button>
+            <Popconfirm
+              title="确定要取消此工作流吗？"
+              onConfirm={handleCancelWorkflow}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button danger icon={<CloseCircleOutlined />}>
+                取消
+              </Button>
+            </Popconfirm>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => setEditModalOpen(true)}
+            >
+              修改参数
+            </Button>
+          </>
+        )}
+        {effectiveStatus === 'running' && (
           <>
             <Button
               type="primary"
@@ -443,7 +562,7 @@ const TaskDetail: React.FC = () => {
             </Popconfirm>
           </>
         )}
-        {currentTask.status === 'paused' && (
+        {effectiveStatus === 'paused' && (
           <>
             <Button
               type="primary"
@@ -467,7 +586,7 @@ const TaskDetail: React.FC = () => {
             </Button>
           </>
         )}
-        {currentTask.status === 'completed' && (
+        {effectiveStatus === 'completed' && (
           <Popconfirm
             title="确定要删除这个任务吗？"
             onConfirm={handleDelete}
@@ -479,7 +598,7 @@ const TaskDetail: React.FC = () => {
             </Button>
           </Popconfirm>
         )}
-        {(currentTask.status === 'failed' || currentTask.status === 'cancelled') && (
+        {(effectiveStatus === 'failed' || effectiveStatus === 'cancelled') && (
           <>
             <Button
               type="primary"
@@ -508,12 +627,57 @@ const TaskDetail: React.FC = () => {
         )}
       </Space>
 
+      {/* 等待确认：显示配置摘要 */}
+      {effectiveStatus === 'confirming' && workflowStatus && (
+        <Card
+          style={{
+            marginBottom: 16,
+            borderColor: '#faad14',
+            background: 'linear-gradient(135deg, #fffbe6 0%, #fff7e6 100%)',
+            borderLeft: '4px solid #faad14',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <ExclamationCircleOutlined style={{ color: '#faad14', fontSize: 20, marginTop: 2 }} />
+            <div style={{ flex: 1 }}>
+              <h3 style={{ margin: '0 0 8px 0', color: '#ad6800' }}>等待确认评测配置</h3>
+              <pre style={{
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'inherit',
+                margin: 0,
+                color: '#595959',
+                fontSize: 14,
+                lineHeight: 1.8,
+              }}>
+                {workflowStatus.config_summary}
+              </pre>
+              {workflowStatus.current_step && (
+                <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 13 }}>
+                  当前步骤: {workflowStatus.current_step}
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* 失败诊断结果 */}
+      {effectiveStatus === 'failed' && workflowStatus?.diagnosis && (
+        <Alert
+          type="error"
+          showIcon
+          message="诊断结果"
+          description={workflowStatus.diagnosis}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={16} align="middle">
           <Col flex="auto">
             <h2>{currentTask.name}</h2>
             <Space>
-              {getStatusTag(currentTask.status)}
+              {getStatusTag(effectiveStatus || 'pending')}
               <span>模型: {currentTask.model_name}</span>
               <span>数据集: {currentTask.datasets.join(', ')}</span>
             </Space>
@@ -522,7 +686,7 @@ const TaskDetail: React.FC = () => {
             <Progress
               type="circle"
               percent={currentTask.progress}
-              status={currentTask.status === 'failed' ? 'exception' : undefined}
+              status={effectiveStatus === 'failed' ? 'exception' : undefined}
             />
           </Col>
         </Row>
@@ -680,7 +844,7 @@ const TaskDetail: React.FC = () => {
       )}
 
       {/* 评测日志 - 所有状态都显示 */}
-      {currentTask.status !== 'pending' && (
+      {effectiveStatus !== 'pending' && effectiveStatus !== 'confirming' && (
         <Card
           title="评测日志"
           style={{ marginTop: 16 }}

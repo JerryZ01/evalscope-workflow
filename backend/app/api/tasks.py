@@ -202,7 +202,9 @@ async def delete_task(
     if task.status == TaskStatus.RUNNING:
         try:
             from evalscope_wrapper.runner import cancel_runner, cleanup_runner
+            from app.workflows.eval_workflow import cancel_eval_process
             cancel_runner(task_id)
+            cancel_eval_process(task_id)
             # 先标记为 CANCELLED，让 runner 看到状态变化后能感知到
             task.status = TaskStatus.CANCELLED
             task.completed_at = datetime.utcnow()
@@ -310,7 +312,9 @@ async def stop_task(
     # 先发送取消信号给 runner（确保 runner 能收到）
     try:
         from evalscope_wrapper.runner import cancel_runner
+        from app.workflows.eval_workflow import cancel_eval_process
         cancel_runner(task_id)
+        cancel_eval_process(task_id)
     except Exception as e:
         logger.warning(f"发送取消信号失败: {e}")
 

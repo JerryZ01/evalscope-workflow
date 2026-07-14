@@ -4,7 +4,7 @@ import {
 } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import { useTaskStore } from '@/stores';
-import { evalApi } from '@/api/results';
+import { workflowApi } from '@/api/workflow';
 import { modelApi } from '@/api/models';
 import { catalogApi } from '@/api/catalog';
 import type { ManagedModelBrief } from '@/types';
@@ -106,10 +106,9 @@ const EditTaskModal: React.FC<Props> = ({ open, onClose, taskId }) => {
       const values = await form.validateFields();
       setLoading(true);
       await updateTask(Number(taskId), buildUpdateParams(values));
-      // 已完成任务可以直接运行，不需要 retry
-      await evalApi.run(Number(taskId));
+      await workflowApi.start(Number(taskId));
       await fetchTask(Number(taskId));
-      message.success('参数已保存，任务已重新启动');
+      message.success('参数已保存，工作流已启动');
       onClose();
     } catch (error: any) {
       const errMsg = error?.response?.data?.detail || error?.message || String(error) || '操作失败';

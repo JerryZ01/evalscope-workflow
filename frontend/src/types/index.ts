@@ -54,7 +54,20 @@ export interface Task {
   duration?: number;
 }
 
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type TaskStatus = 'pending' | 'confirming' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface WorkflowStatus {
+  task_id: number;
+  waiting_for_confirmation: boolean;
+  next_step: string | null;
+  current_step: string;
+  config_summary: string;
+  diagnosis: string;
+  retry_count: number;
+  eval_success: boolean | null;
+  eval_score: number | null;
+  eval_error: string | null;
+}
 
 export interface GenerationConfig {
   temperature?: number;

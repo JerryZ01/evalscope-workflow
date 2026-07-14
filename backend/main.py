@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import tasks, catalog, eval as eval_api, results, models, settings, chat
+from app.api import tasks, catalog, eval as eval_api, results, models, settings, chat, workflow
 from app.db.database import engine, Base
 from app.core.config import settings as app_settings
 
@@ -69,6 +69,7 @@ app.include_router(results.router, prefix="/api/results", tags=["评测结果"])
 app.include_router(models.router, prefix="/api/models", tags=["模型管理"])
 app.include_router(settings.router, prefix="/api/settings", tags=["系统设置"])
 app.include_router(chat.router, prefix="/api/chat", tags=["AI 助手"])
+app.include_router(workflow.router, prefix="/api/workflow", tags=["评测工作流"])
 
 # 注册 settings（配置对象）
 app.state.settings = app_settings
