@@ -9,6 +9,7 @@ EvalScope Workflow 是一个全栈评测工作流引擎，为 LLM/ML 模型评�
 - [前端文档](./frontend.md) - 前端页面、功能组件、状态管理
 - [用户指南](./guide.md) - 功能使用说明
 - [二次开发](./development.md) - 开发规范、接口扩展
+- [简历与面试准备](./interview-guide.md) - 项目讲解、技术深挖、演示方案与完整 QA
 
 ## 核心功能
 
