@@ -24,20 +24,16 @@ import {
   StarOutlined,
   StarFilled,
   ApiOutlined,
-  KeyOutlined,
   SettingOutlined,
-  ThunderboltOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined
+  ThunderboltOutlined
 } from '@ant-design/icons';
-import { modelApi, type CreateModelParams, type ConnectionTestResult } from '@/api/models';
+import { modelApi, type ConnectionTestResult } from '@/api/models';
 import type { ManagedModel } from '@/types';
 import PageHeader from '@/components/common/PageHeader';
 import TestResultModal from './TestResultModal';
 
 const ModelsPage: React.FC = () => {
   const [models, setModels] = useState<ManagedModel[]>([]);
-  const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingModel, setEditingModel] = useState<ManagedModel | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
@@ -49,14 +45,11 @@ const ModelsPage: React.FC = () => {
   const [form] = Form.useForm();
 
   const fetchModels = async () => {
-    setLoading(true);
     try {
       const data = await modelApi.list({ limit: 100 });
       setModels(data.models);
     } catch (error: any) {
       message.error(error.message || '获取模型列表失败');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -140,7 +133,7 @@ const ModelsPage: React.FC = () => {
 
   const openEditModal = (model: ManagedModel) => {
     setEditingModel(model);
-    form.setFieldsValue(model);
+    form.setFieldsValue({ ...model, api_key: undefined });
     setModalVisible(true);
   };
 
@@ -421,7 +414,7 @@ const ModelsPage: React.FC = () => {
               {selectedModel.api_url || '-'}
             </Descriptions.Item>
             <Descriptions.Item label="API Key">
-              {selectedModel.api_key ? '******' : '-'}
+              {selectedModel.has_api_key ? '已配置' : '-'}
             </Descriptions.Item>
             <Descriptions.Item label="描述">
               {selectedModel.description || '-'}

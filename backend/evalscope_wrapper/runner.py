@@ -4,14 +4,15 @@ EvalScope 评测执行器
 """
 import asyncio
 import glob as glob_module
-import io
 import json
 import logging
 import os
-import sys
 import time
+from queue import Empty
 from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
+
+from app.core.eval_process import run_eval_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -211,101 +212,38 @@ def _process_report_result(report: Any, work_dir: Optional[str]) -> tuple[dict, 
     return result_dict, all_scores, all_metrics, error_hint
 
 
-def _run_eval_in_process(config, result_queue, task_id=None):
+def _read_log_increment(log_file_path: str, last_offset: int) -> tuple:
+    """读取日志文件的增量内容
+
+    Returns:
+        (new_content, new_offset) - 新增的日志文本和新的文件偏移量
     """
-    在子进程中运行评测
-
-    Args:
-        config: TaskConfig 对象
-        result_queue: 进程间通信队列
-        task_id: 任务 ID，用于取消检查
-    """
-    import sys
-    import io
-    import time
-
-    # 捕获 stdout/stderr
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    stdout_capture = io.StringIO()
-    stderr_capture = io.StringIO()
-
-    def update_logs_to_db(log_content):
-        """实时更新日志到数据库"""
-        if not task_id:
-            return
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE evaluation_tasks SET logs = ? WHERE id = ?",
-                (log_content, task_id)
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            # 日志保存失败不影响评测继续
-            pass
-
-    def check_cancelled():
-        """检查是否已取消（从数据库读取）"""
-        if not task_id:
-            return False
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT status FROM evaluation_tasks WHERE id=?", (task_id,))
-            row = cursor.fetchone()
-            conn.close()
-            if row and row[0] == 'cancelled':
-                return True
-        except Exception:
-            pass
-        return False
-
     try:
-        sys.stdout = stdout_capture
-        sys.stderr = stderr_capture
+        if not os.path.exists(log_file_path):
+            return "", last_offset
+        file_size = os.path.getsize(log_file_path)
+        if file_size <= last_offset:
+            return "", last_offset
+        with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            f.seek(last_offset)
+            new_content = f.read()
+            new_offset = f.tell()
+        return new_content, new_offset
+    except Exception:
+        return "", last_offset
 
-        from evalscope import run_task
 
-        # 定期检查取消状态（通过修改 run_task 的执行方式）
-        # 由于 run_task 是同步阻塞的，我们只能依赖外部进程终止
-        report = run_task(config)
-
-        # 保存捕获的日志到数据库（不包含执行命令，只保存评测输出）
-        captured_logs = stdout_capture.getvalue() + stderr_capture.getvalue()
-        if captured_logs:
-            update_logs_to_db(captured_logs)
-
-        # 序列化结果
-        if hasattr(report, 'to_dict'):
-            result = report.to_dict()
-        elif isinstance(report, dict):
-            result = dict(report)
-        else:
-            result = {
-                'score': getattr(report, 'score', 0.0) if hasattr(report, 'score') else 0.0,
-                'metrics': getattr(report, 'metrics', []) if hasattr(report, 'metrics') else []
-            }
-
-        result_queue.put({'report': result, 'error': None})
-
+async def _broadcast_log_increment(task_id: int, new_logs: str):
+    """通过 SSE 广播日志增量"""
+    try:
+        from app.api.eval import SSEManager
+        await SSEManager.broadcast(task_id, "logs", {
+            "logs": new_logs,
+            "incremental": True
+        })
+        logger.info(f"SSE 广播日志增量成功: task_id={task_id}, {len(new_logs)} bytes")
     except Exception as e:
-        # 保存错误日志到数据库（不包含执行命令）
-        captured_logs = stdout_capture.getvalue() + stderr_capture.getvalue()
-        error_logs = captured_logs + f"\n\n错误: {str(e)}\n"
-        update_logs_to_db(error_logs)
-
-        result_queue.put({'report': None, 'error': str(e)})
-
-    finally:
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
+        logger.warning(f"广播日志增量失败: {e}")
 
 
 class EvalScopeRunner:
@@ -323,9 +261,11 @@ class EvalScopeRunner:
         self.task_id = task_id
         self._process = None  # 评测子进程
         self._pid = None  # 子进程 PID
+        self._cancel_requested = False
 
     def cancel(self):
         """强制取消当前评测任务"""
+        self._cancel_requested = True
         if self._pid:
             import signal
             try:
@@ -350,22 +290,8 @@ class EvalScopeRunner:
         logger.info(f"评测任务已取消: task_id={self.task_id}")
 
     def is_cancelled(self) -> bool:
-        """检查是否已请求取消（从数据库读取状态）"""
-        if not self.task_id:
-            return False
-        try:
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), '..', 'evalscope.db')
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT status FROM evaluation_tasks WHERE id=?", (self.task_id,))
-            row = cursor.fetchone()
-            conn.close()
-            if row and row[0] == 'cancelled':
-                return True
-        except Exception as e:
-            logger.warning(f"检查取消状态失败: {e}")
-        return False
+        """检查当前 runner 是否已收到取消请求。"""
+        return self._cancel_requested
 
     async def run_evaluation(
         self,
@@ -421,15 +347,17 @@ class EvalScopeRunner:
             # 输出目录：
             # - 断点续测时：使用 use_cache 指定的目录
             # - 新评测时：outputs/{timestamp}
-            from datetime import datetime
-
             if use_cache:
                 # 断点续测：使用之前的工作目录
                 work_dir = use_cache
             else:
                 # 新评测：创建新的输出目录
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                work_dir = f"../outputs/{timestamp}"
+                from app.core.config import settings
+                from app.core.output_paths import build_run_directory_name
+
+                run_name = build_run_directory_name()
+                work_dir = os.path.abspath(os.path.join(settings.EVALSCOPE_WORK_DIR, run_name))
+            os.makedirs(work_dir, exist_ok=True)
             # 映射引擎名称到 EvalScope 常量
             # 前端使用小写（native, opencompass, vlmeval, rag_eval），
             # EvalScope 使用标题大小写（Native, OpenCompass, VLMEvalKit, RAGEval）
@@ -568,6 +496,10 @@ class EvalScopeRunner:
 
             self._report_progress(40, "正在执行评测...")
 
+            if self.task_id:
+                from app.services.task_state import update_task_state
+                await update_task_state(self.task_id, output_dir=work_dir)
+
             # 使用子进程运行评测，支持强制取消
             import multiprocessing
 
@@ -576,18 +508,39 @@ class EvalScopeRunner:
 
             # 启动子进程
             self._process = multiprocessing.Process(
-                target=_run_eval_in_process,
-                args=(config, result_queue, self.task_id)
+                target=run_eval_subprocess,
+                args=(config, result_queue)
             )
             self._process.start()
             self._pid = self._process.pid
             logger.info(f"评测进程已启动: task_id={self.task_id}, pid={self._pid}")
 
-            # 等待进程完成
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._process.join)
+            # 等待进程完成，同时定期推送日志增量
+            log_file_path = os.path.join(work_dir, 'logs', 'eval_log.log')
+            logger.info(f"日志增量推送启动: log_file_path={log_file_path}, abs={os.path.abspath(log_file_path)}")
+            last_log_offset = 0
+            result_data = None
+            while self._process.is_alive():
+                if result_data is None:
+                    try:
+                        result_data = result_queue.get_nowait()
+                    except Empty:
+                        pass
+                # 读取并推送日志增量
+                new_logs, last_log_offset = _read_log_increment(log_file_path, last_log_offset)
+                if new_logs and self.task_id:
+                    logger.info(f"推送日志增量: {len(new_logs)} bytes, offset={last_log_offset}")
+                    await _broadcast_log_increment(self.task_id, new_logs)
+                # 等待 2 秒后再次检查
+                await asyncio.sleep(2)
 
-            # 检查是否被取消
+            # 进程已退出，推送最后一批日志
+            new_logs, last_log_offset = _read_log_increment(log_file_path, last_log_offset)
+            if new_logs and self.task_id:
+                await _broadcast_log_increment(self.task_id, new_logs)
+
+            # 确保子进程资源回收
+            self._process.join()
             if self.is_cancelled():
                 duration = time.time() - start_time
                 logger.info(f"评测任务已被取消: task_id={self.task_id}")
@@ -597,9 +550,17 @@ class EvalScopeRunner:
                     duration=duration
                 )
 
-            # 获取结果
-            if not result_queue.empty():
-                result_data = result_queue.get()
+            # 获取结果。Queue.empty() 在多进程下不可靠。
+            if result_data is None:
+                try:
+                    result_data = result_queue.get(timeout=2)
+                except Empty:
+                    result_data = None
+
+            if result_data is not None:
+                if self.task_id and result_data.get('logs'):
+                    from app.services.task_state import append_task_logs
+                    await append_task_logs(self.task_id, result_data['logs'])
                 if result_data.get('error'):
                     duration = time.time() - start_time
                     return EvalResult(
@@ -607,14 +568,18 @@ class EvalScopeRunner:
                         error=result_data['error'],
                         duration=duration
                     )
-                report = result_data.get('report')
             else:
-                report = None
+                return EvalResult(
+                    success=False,
+                    error="评测进程无返回结果",
+                    duration=time.time() - start_time,
+                    output_dir=work_dir,
+                )
 
             self._report_progress(90, "正在生成报告...")
 
             # 处理报告结果
-            result_dict, all_scores, all_metrics, error_hint = _process_report_result(report, work_dir)
+            result_dict, all_scores, all_metrics, error_hint = _process_report_result({}, work_dir)
 
             duration = time.time() - start_time
             final_score = sum(all_scores) / len(all_scores) if all_scores else result_dict.get('score', 0.0)
@@ -651,24 +616,7 @@ class EvalScopeRunner:
             logger.info(f"评测任务已取消，忽略进度报告: {progress}% - {message}")
             return
 
-        # 1. 更新数据库
-        if self.task_id:
-            try:
-                import sqlite3
-                db_path = os.path.join(os.path.dirname(__file__), '..', 'evalscope.db')
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE evaluation_tasks SET progress=?, current_step=? WHERE id=?",
-                    (progress, message, self.task_id)
-                )
-                conn.commit()
-                conn.close()
-                logger.info(f"数据库进度已更新: {progress}% - {message}")
-            except Exception as e:
-                logger.warning(f"更新数据库进度失败: {e}")
-
-        # 2. SSE 推送（如果提供了回调）
+        # The callback owns persistence and SSE delivery.
         if self.progress_callback:
             try:
                 self.progress_callback(progress, message)

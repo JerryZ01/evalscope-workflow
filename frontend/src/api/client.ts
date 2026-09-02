@@ -1,6 +1,7 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 
-const client = axios.create({
+const axiosClient = axios.create({
   baseURL: '/api',
   timeout: 60000,
   headers: {
@@ -9,7 +10,7 @@ const client = axios.create({
 });
 
 // 请求拦截器
-client.interceptors.request.use(
+axiosClient.interceptors.request.use(
   (config) => {
     return config;
   },
@@ -19,11 +20,14 @@ client.interceptors.request.use(
 );
 
 // 响应拦截器
-client.interceptors.response.use(
+axiosClient.interceptors.response.use(
   (response) => {
     return response.data;
   },
   (error) => {
+    if (error.response?.status === 401) {
+      window.dispatchEvent(new Event('evalscope-auth-required'));
+    }
     const detail = error.response?.data?.detail;
     let message = '请求失败';
     if (detail) {
@@ -42,5 +46,15 @@ client.interceptors.response.use(
     return Promise.reject(new Error(message));
   }
 );
+
+interface ApiClient {
+  get<T>(url: string, config?: AxiosRequestConfig): Promise<T>;
+  post<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T>;
+  patch<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T>;
+  put<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T>;
+  delete<T>(url: string, config?: AxiosRequestConfig): Promise<T>;
+}
+
+const client = axiosClient as unknown as ApiClient;
 
 export default client;

@@ -1,33 +1,38 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Row, Col, Statistic, Progress, Spin, Tag, Button, Space, Table, Descriptions, message, Empty, Popconfirm } from 'antd';
-import { PlayCircleOutlined, StopOutlined, ArrowLeftOutlined, ReloadOutlined, PauseCircleOutlined, DeleteOutlined, RedoOutlined, EditOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Statistic, Progress, Spin, Tag, Button, Space, Descriptions, message, Empty, Popconfirm, Alert } from 'antd';
+import { PlayCircleOutlined, StopOutlined, ArrowLeftOutlined, ReloadOutlined, DeleteOutlined, RedoOutlined, EditOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useTaskStore } from '@/stores';
-import { resultsApi, evalApi } from '@/api/results';
-import type { VisualizationData, Task } from '@/types';
-import { Column, Radar, Line } from '@ant-design/plots';
+import { resultsApi } from '@/api/results';
+import { workflowApi } from '@/api/workflow';
+import type { VisualizationData, WorkflowStatus } from '@/types';
+import { Column, Radar } from '@ant-design/plots';
 import EditTaskModal from './EditTaskModal';
 
 const TaskDetail: React.FC = () => {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
-  const { currentTask, fetchTask, stopTask, pauseTask, deleteTask, retryTask, loading, setCurrentTask } = useTaskStore();
+  const { currentTask, fetchTask, stopTask, deleteTask, retryTask, loading, setCurrentTask } = useTaskStore();
 
   const [vizData, setVizData] = useState<VisualizationData | null>(null);
   const [vizLoading, setVizLoading] = useState(false);
   const [taskLogs, setTaskLogs] = useState<string>("");
   const [actualCommand, setActualCommand] = useState<string>("");
   const [logsLoading, setLogsLoading] = useState(false);
-  const [sseConnected, setSseConnected] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportKey, setReportKey] = useState(0);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   // SSE 连接引用
   const eventSourceRef = useRef<EventSource | null>(null);
-  const logsPollingRef = useRef<NodeJS.Timeout | null>(null);
-  // 任务状态兜底轮询（SSE 失败/丢包时仍能更新 status/progress）
-  const taskPollingRef = useRef<NodeJS.Timeout | null>(null);
+  // 日志容器引用（用于自动滚动）
+  const logContainerRef = useRef<HTMLPreElement | null>(null);
+  // SSE 连接状态引用（避免闭包捕获过期值）
+  const sseConnectedRef = useRef(false);
+  // 工作流状态轮询定时器
+  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (taskId) {
@@ -44,6 +49,49 @@ const TaskDetail: React.FC = () => {
     }
   }, [currentTask?.status, taskId]);
 
+  // 查询工作流状态（pending 任务可能正在等待确认）
+  useEffect(() => {
+    if (currentTask?.status === 'pending' && taskId) {
+      workflowApi.getStatus(Number(taskId)).then(status => {
+        setWorkflowStatus(status);
+        if (status.waiting_for_confirmation) {
+          startWorkflowPolling(Number(taskId));
+        }
+      }).catch(() => {
+        setWorkflowStatus(null);
+      });
+    }
+    return () => stopWorkflowPolling();
+  }, [currentTask?.status, taskId]);
+
+  // 计算 UI 有效状态
+  const effectiveStatus = currentTask?.status === 'pending' && workflowStatus?.waiting_for_confirmation
+    ? 'confirming' as const
+    : currentTask?.status;
+
+  const startWorkflowPolling = (id: number) => {
+    if (pollingTimerRef.current) return;
+    pollingTimerRef.current = setInterval(async () => {
+      try {
+        const status = await workflowApi.getStatus(id);
+        setWorkflowStatus(status);
+        if (!status.waiting_for_confirmation) {
+          stopWorkflowPolling();
+          fetchTask(id);
+        }
+      } catch (e) {
+        console.error('工作流状态轮询失败:', e);
+      }
+    }, 3000);
+  };
+
+  const stopWorkflowPolling = () => {
+    if (pollingTimerRef.current) {
+      clearInterval(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+  };
+
   // 建立 SSE 连接
   const connectSSE = useCallback(() => {
     if (!taskId || eventSourceRef.current) {
@@ -57,7 +105,7 @@ const TaskDetail: React.FC = () => {
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
-      setSseConnected(true);
+      sseConnectedRef.current = true;
       console.log('SSE: 连接已打开');
     };
 
@@ -83,6 +131,22 @@ const TaskDetail: React.FC = () => {
         }
       } catch (e) {
         console.error('SSE: 解析进度事件失败:', e);
+      }
+    });
+
+    // 日志增量事件
+    eventSource.addEventListener('logs', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.incremental && data.logs) {
+          setTaskLogs(prev => prev + data.logs);
+          // 自动滚动到底部
+          setTimeout(() => {
+            logContainerRef.current?.scrollTo({ top: logContainerRef.current.scrollHeight });
+          }, 50);
+        }
+      } catch (e) {
+        console.error('SSE: 解析日志事件失败:', e);
       }
     });
 
@@ -112,7 +176,7 @@ const TaskDetail: React.FC = () => {
 
     eventSource.onerror = (error) => {
       console.error('SSE: 连接错误:', error);
-      setSseConnected(false);
+      sseConnectedRef.current = false;
       // 断开重连
       eventSource.close();
       eventSourceRef.current = null;
@@ -128,28 +192,15 @@ const TaskDetail: React.FC = () => {
 
   // 根据任务状态管理 SSE 连接
   useEffect(() => {
-    if (taskId && currentTask) {
-      console.log('TaskDetail: 任务状态变化', currentTask.status, 'taskId:', taskId);
+    if (!taskId || !currentTask) return;
 
-      // 运行中的任务建立 SSE 连接 + 兜底轮询
-      if (currentTask.status === 'running' || currentTask.status === 'pending') {
-        console.log('TaskDetail: 启动 SSE 连接和日志轮询');
-        connectSSE();
-
-        // 日志轮询（每 3 秒）
-        logsPollingRef.current = setInterval(() => {
-          loadLogs();
-        }, 3000);
-
-        // 任务状态兜底轮询（每 5 秒）—— SSE 失败时仍能更新进度/状态
-        taskPollingRef.current = setInterval(() => {
-          fetchTask(Number(taskId));
-        }, 5000);
-      }
-
-      // 加载初始日志
-      loadLogs();
+    // 运行中的任务建立 SSE 连接
+    if (effectiveStatus === 'running') {
+      connectSSE();
     }
+
+    // 加载日志（仅在首次进入或状态切换时）
+    loadLogs(true);
 
     return () => {
       // 清理 SSE 连接
@@ -157,32 +208,38 @@ const TaskDetail: React.FC = () => {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
-      // 清理日志轮询
-      if (logsPollingRef.current) {
-        clearInterval(logsPollingRef.current);
-        logsPollingRef.current = null;
-      }
-      // 清理任务状态轮询
-      if (taskPollingRef.current) {
-        clearInterval(taskPollingRef.current);
-        taskPollingRef.current = null;
-      }
-      setSseConnected(false);
+      sseConnectedRef.current = false;
     };
-  }, [taskId, currentTask?.status]);
+  }, [taskId, effectiveStatus]);
 
   // 加载日志
-  const loadLogs = async () => {
+  const loadLogs = async (forceFullUpdate: boolean = false) => {
     if (!taskId) return;
     setLogsLoading(true);
     try {
-      console.log('loadLogs: 发起请求, taskId:', taskId);
       const response = await fetch(`/api/eval/log/${taskId}`);
-      console.log('loadLogs: 收到响应, status:', response.status);
       const data = await response.json();
-      console.log('loadLogs: 日志数据, source:', data.log_source, 'length:', (data.logs || '').length);
-      setTaskLogs(data.logs || "");
-      setActualCommand(data.actual_command || "");  // 保存执行命令
+      setActualCommand(data.actual_command || "");
+      const logs = data.logs || "";
+      // forceFullUpdate=true 时强制覆盖（如手动刷新、初始加载）
+      // SSE 连接时用全量日志做同步（避免增量丢失），未连接时也全量覆盖
+      if (forceFullUpdate || !sseConnectedRef.current) {
+        setTaskLogs(logs);
+      } else {
+        // SSE 已连接：如果服务端日志比当前显示的长，说明有增量丢失，用全量补齐
+        setTaskLogs(prev => {
+          if (logs.length > prev.length) {
+            return logs;
+          }
+          return prev;
+        });
+      }
+      // 加载全量日志后滚动到底部
+      if (forceFullUpdate) {
+        setTimeout(() => {
+          logContainerRef.current?.scrollTo({ top: logContainerRef.current.scrollHeight });
+        }, 50);
+      }
     } catch (error) {
       console.error("loadLogs: 加载失败:", error);
     } finally {
@@ -223,11 +280,45 @@ const TaskDetail: React.FC = () => {
   const handleStart = async () => {
     if (!taskId) return;
     try {
-      await evalApi.run(Number(taskId));
-      message.success('任务已启动');
+      await workflowApi.start(Number(taskId));
+      message.info('工作流已启动，正在准备配置...');
+      const status = await workflowApi.getStatus(Number(taskId));
+      setWorkflowStatus(status);
+      if (status.waiting_for_confirmation) {
+        startWorkflowPolling(Number(taskId));
+      }
       fetchTask(Number(taskId));
     } catch (error: any) {
       message.error(error.message || '启动失败');
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!taskId) return;
+    setConfirming(true);
+    try {
+      await workflowApi.confirm(Number(taskId));
+      stopWorkflowPolling();
+      setWorkflowStatus(null);
+      message.success('评测已开始执行');
+      fetchTask(Number(taskId));
+    } catch (error: any) {
+      message.error(error.message || '确认失败');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const handleCancelWorkflow = async () => {
+    if (!taskId) return;
+    try {
+      await workflowApi.cancel(Number(taskId));
+      stopWorkflowPolling();
+      setWorkflowStatus(null);
+      message.success('工作流已取消');
+      fetchTask(Number(taskId));
+    } catch (error: any) {
+      message.error(error.message || '取消失败');
     }
   };
 
@@ -238,7 +329,7 @@ const TaskDetail: React.FC = () => {
       message.success('任务已停止');
       fetchTask(Number(taskId));
       // 停止后加载日志
-      loadLogs();
+      loadLogs(true);
     } catch (error: any) {
       message.error(error.message || '停止失败');
     }
@@ -253,28 +344,6 @@ const TaskDetail: React.FC = () => {
       navigate('/tasks');
     } catch (error: any) {
       message.error(error.message || '操作失败');
-    }
-  };
-
-  const handlePause = async () => {
-    if (!taskId) return;
-    try {
-      await pauseTask(Number(taskId));
-      message.success('任务已暂停');
-      fetchTask(Number(taskId));
-    } catch (error: any) {
-      message.error(error.message || '暂停失败');
-    }
-  };
-
-  const handleResume = async () => {
-    if (!taskId) return;
-    try {
-      await evalApi.run(Number(taskId));
-      message.success('任务已恢复并启动');
-      fetchTask(Number(taskId));
-    } catch (error: any) {
-      message.error(error.message || '恢复失败');
     }
   };
 
@@ -293,13 +362,16 @@ const TaskDetail: React.FC = () => {
     if (!taskId) return;
     try {
       await retryTask(Number(taskId));
-      // 自动启动评测
-      await evalApi.run(Number(taskId));
-      message.success('评测已自动启动');
+      await workflowApi.start(Number(taskId));
+      const status = await workflowApi.getStatus(Number(taskId));
+      setWorkflowStatus(status);
+      if (status.waiting_for_confirmation) {
+        startWorkflowPolling(Number(taskId));
+      }
+      message.info('工作流已重新启动');
       fetchTask(Number(taskId));
     } catch (error: any) {
       message.error(error.message || '重试失败');
-      // 出错时也刷新最新状态，避免显示不一致
       fetchTask(Number(taskId));
     }
   };
@@ -307,8 +379,8 @@ const TaskDetail: React.FC = () => {
   const getStatusTag = (status: string) => {
     const config: Record<string, { color: string; label: string }> = {
       pending: { color: 'default', label: '待执行' },
+      confirming: { color: 'warning', label: '等待确认' },
       running: { color: 'processing', label: '运行中' },
-      paused: { color: 'warning', label: '已暂停' },
       completed: { color: 'success', label: '已完成' },
       failed: { color: 'error', label: '失败' },
       cancelled: { color: 'default', label: '已取消' },
@@ -376,7 +448,7 @@ const TaskDetail: React.FC = () => {
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
           返回列表
         </Button>
-        {currentTask.status === 'pending' && (
+        {effectiveStatus === 'pending' && (
           <>
             <Button
               type="primary"
@@ -403,15 +475,8 @@ const TaskDetail: React.FC = () => {
             </Popconfirm>
           </>
         )}
-        {currentTask.status === 'running' && (
+        {effectiveStatus === 'running' && (
           <>
-            <Button
-              type="primary"
-              icon={<PauseCircleOutlined />}
-              onClick={handlePause}
-            >
-              暂停
-            </Button>
             <Button
               danger
               icon={<StopOutlined />}
@@ -433,31 +498,7 @@ const TaskDetail: React.FC = () => {
             </Popconfirm>
           </>
         )}
-        {currentTask.status === 'paused' && (
-          <>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={handleResume}
-            >
-              恢复
-            </Button>
-            <Button
-              icon={<EditOutlined />}
-              onClick={() => navigate(`/tasks/${taskId}/edit`)}
-            >
-              编辑参数
-            </Button>
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              onClick={handleDelete}
-            >
-              删除
-            </Button>
-          </>
-        )}
-        {currentTask.status === 'completed' && (
+        {effectiveStatus === 'completed' && (
           <Popconfirm
             title="确定要删除这个任务吗？"
             onConfirm={handleDelete}
@@ -469,7 +510,7 @@ const TaskDetail: React.FC = () => {
             </Button>
           </Popconfirm>
         )}
-        {(currentTask.status === 'failed' || currentTask.status === 'cancelled') && (
+        {(effectiveStatus === 'failed' || effectiveStatus === 'cancelled') && (
           <>
             <Button
               type="primary"
@@ -498,12 +539,91 @@ const TaskDetail: React.FC = () => {
         )}
       </Space>
 
+      {/* 等待确认：显示配置摘要 */}
+      {effectiveStatus === 'confirming' && (
+        <Card
+          title={
+            <Space>
+              <ExclamationCircleOutlined style={{ color: '#d48806' }} />
+              <span style={{ color: '#874d00' }}>人工确认：评测配置</span>
+            </Space>
+          }
+          extra={<Tag color="warning">LangGraph 已中断</Tag>}
+          style={{
+            marginBottom: 16,
+            borderColor: '#faad14',
+            background: '#fffbe6',
+            borderLeft: '4px solid #faad14',
+          }}
+        >
+          <pre style={{
+            whiteSpace: 'pre-wrap',
+            fontFamily: 'inherit',
+            margin: 0,
+            color: '#595959',
+            fontSize: 14,
+            lineHeight: 1.8,
+          }}>
+            {workflowStatus?.config_summary || [
+              `模型: ${currentTask.model_name}`,
+              `数据集: ${currentTask.datasets.join(', ')}`,
+              `引擎: ${currentTask.engine || 'native'}`,
+              currentTask.limit ? `样本限制: ${currentTask.limit}` : '',
+            ].filter(Boolean).join('\n')}
+          </pre>
+          {workflowStatus?.current_step && (
+            <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 13 }}>
+              当前步骤: {workflowStatus.current_step}
+            </div>
+          )}
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #ffe58f' }}>
+            <Space wrap>
+              <Button
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                onClick={handleConfirm}
+                loading={confirming}
+              >
+                确认执行
+              </Button>
+              <Popconfirm
+                title="确定要取消此工作流吗？"
+                onConfirm={handleCancelWorkflow}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button danger icon={<CloseCircleOutlined />}>
+                  取消
+                </Button>
+              </Popconfirm>
+              <Button
+                icon={<EditOutlined />}
+                onClick={() => setEditModalOpen(true)}
+              >
+                修改参数
+              </Button>
+            </Space>
+          </div>
+        </Card>
+      )}
+
+      {/* 失败诊断结果 */}
+      {effectiveStatus === 'failed' && workflowStatus?.diagnosis && (
+        <Alert
+          type="error"
+          showIcon
+          message="诊断结果"
+          description={workflowStatus.diagnosis}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={16} align="middle">
           <Col flex="auto">
             <h2>{currentTask.name}</h2>
             <Space>
-              {getStatusTag(currentTask.status)}
+              {getStatusTag(effectiveStatus || 'pending')}
               <span>模型: {currentTask.model_name}</span>
               <span>数据集: {currentTask.datasets.join(', ')}</span>
             </Space>
@@ -512,7 +632,7 @@ const TaskDetail: React.FC = () => {
             <Progress
               type="circle"
               percent={currentTask.progress}
-              status={currentTask.status === 'failed' ? 'exception' : undefined}
+              status={effectiveStatus === 'failed' ? 'exception' : undefined}
             />
           </Col>
         </Row>
@@ -670,7 +790,7 @@ const TaskDetail: React.FC = () => {
       )}
 
       {/* 评测日志 - 所有状态都显示 */}
-      {currentTask.status !== 'pending' && (
+      {effectiveStatus !== 'pending' && effectiveStatus !== 'confirming' && (
         <Card
           title="评测日志"
           style={{ marginTop: 16 }}
@@ -678,7 +798,7 @@ const TaskDetail: React.FC = () => {
             <Button
               size="small"
               icon={<ReloadOutlined />}
-              onClick={loadLogs}
+              onClick={() => loadLogs(true)}
               loading={logsLoading}
             >
               刷新
@@ -686,7 +806,7 @@ const TaskDetail: React.FC = () => {
           }
         >
           {taskLogs ? (
-            <pre style={{
+            <pre ref={logContainerRef} style={{
               maxHeight: 500,
               overflow: 'auto',
               background: '#f5f5f5',

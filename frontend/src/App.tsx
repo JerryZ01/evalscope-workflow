@@ -12,6 +12,7 @@ import ModelsPage from './pages/Models';
 import SettingsPage from './pages/Settings';
 import EvalPlatformV1 from './pages/EvalPlatformV1';
 import Docs from './pages/Docs';
+import AIChat from './pages/AIChat';
 import { useCatalogStore } from './stores';
 
 function App() {
@@ -86,6 +87,7 @@ function App() {
         <Route path="/catalog" element={<Catalog />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/ai-chat" element={<AIChat />} />
         <Route path="/eval-platform-v1" element={<EvalPlatformV1 />} />
         <Route path="/docs" element={<Docs />} />
       </Routes>

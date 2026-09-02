@@ -202,7 +202,9 @@ async def delete_task(
     if task.status == TaskStatus.RUNNING:
         try:
             from evalscope_wrapper.runner import cancel_runner, cleanup_runner
+            from app.workflows.eval_workflow import cancel_eval_process
             cancel_runner(task_id)
+            cancel_eval_process(task_id)
             # 先标记为 CANCELLED，让 runner 看到状态变化后能感知到
             task.status = TaskStatus.CANCELLED
             task.completed_at = datetime.utcnow()
@@ -230,53 +232,19 @@ async def start_task(
     task_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    [已废弃] 启动任务
+    """Compatibility endpoint delegating to the confirmation workflow."""
+    from app.api.workflow import start_workflow
 
-    此端点已废弃，请改用 POST /api/eval/run/{task_id}
-    本端点保留是为了向后兼容，但只会将状态设为 RUNNING 而不实际启动评测。
-    """
+    await start_workflow(task_id, db)
     result = await db.execute(
         select(EvaluationTask).where(EvaluationTask.id == task_id)
     )
-    task = result.scalar_one_or_none()
-
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"任务 {task_id} 不存在"
-        )
-
-    # 只有 PENDING/COMPLETED/FAILED/CANCELLED 可启动
-    if task.status not in (TaskStatus.PENDING, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"状态为 {task.status.value} 的任务无法启动"
-        )
-
-    # 更新任务状态
-    task.status = TaskStatus.RUNNING
-    task.started_at = datetime.utcnow()
-    task.progress = 0
-    task.current_step = "初始化"
-    # 清除旧结果
-    task.results = None
-    task.logs = None
-    task.error = None
-    task.completed_at = None
-    task.duration = None
-
-    await db.commit()
-    await db.refresh(task)
-
-    # TODO: 触发异步评测任务
-    # from app.tasks.eval_tasks import run_evaluation_task
-    # run_evaluation_task.delay(task_id)
+    task = result.scalar_one()
 
     return TaskActionResponse(
         id=task.id,
         status=task.status,
-        message="任务已启动，请调用 /api/eval/run/ 触发实际评测"
+        message="评测工作流已启动，等待配置确认"
     )
 
 
@@ -310,7 +278,9 @@ async def stop_task(
     # 先发送取消信号给 runner（确保 runner 能收到）
     try:
         from evalscope_wrapper.runner import cancel_runner
+        from app.workflows.eval_workflow import cancel_eval_process
         cancel_runner(task_id)
+        cancel_eval_process(task_id)
     except Exception as e:
         logger.warning(f"发送取消信号失败: {e}")
 

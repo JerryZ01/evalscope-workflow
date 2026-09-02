@@ -4,9 +4,9 @@ import PageHeader from '@/components/common/PageHeader';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTaskStore } from '@/stores';
-import { evalApi } from '@/api/results';
+import { workflowApi } from '@/api/workflow';
 import { taskApi } from '@/api/tasks';
-import type { Task, TaskStatus } from '@/types';
+import type { Task, TaskStatus, WorkflowStatus } from '@/types';
 import dayjs from 'dayjs';
 
 const TaskList: React.FC = () => {
@@ -15,10 +15,35 @@ const TaskList: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   // 记录正在执行操作的任务 ID 集合，操作中的任务按钮显示加载状态
   const [actioningTasks, setActioningTasks] = useState<Set<number>>(new Set());
+  const [workflowStatusMap, setWorkflowStatusMap] = useState<Record<number, WorkflowStatus>>({});
 
   useEffect(() => {
     fetchTasks({ limit: 50 });
   }, []);
+
+  // 对 pending 任务批量查询工作流状态
+  useEffect(() => {
+    const pendingTasks = tasks.filter(t => t.status === 'pending');
+    if (pendingTasks.length === 0) return;
+    Promise.allSettled(
+      pendingTasks.map(t => workflowApi.getStatus(t.id))
+    ).then(results => {
+      const map: Record<number, WorkflowStatus> = {};
+      results.forEach((result, i) => {
+        if (result.status === 'fulfilled' && result.value.waiting_for_confirmation) {
+          map[pendingTasks[i].id] = result.value;
+        }
+      });
+      setWorkflowStatusMap(map);
+    });
+  }, [tasks]);
+
+  const getEffectiveStatus = (task: Task): TaskStatus => {
+    if (task.status === 'pending' && workflowStatusMap[task.id]?.waiting_for_confirmation) {
+      return 'confirming';
+    }
+    return task.status;
+  };
 
   // 辅助函数：标记任务正在操作中
   const setTaskActioning = (taskId: number, isActioning: boolean) => {
@@ -47,12 +72,9 @@ const TaskList: React.FC = () => {
   const handleRetry = async (taskId: number) => {
     setTaskActioning(taskId, true);
     try {
-      // 1. 重置任务状态为 pending
       await retryTask(taskId);
-      // 2. 立即触发评测（后端会将状态改为 running）
-      await evalApi.run(taskId);
-      // 3. 刷新列表以获取最新状态（running）
-      await fetchTasks({ limit: 50 });
+      await workflowApi.start(taskId);
+      navigate(`/tasks/${taskId}`);
     } catch (error) {
       console.error('Failed to retry task:', error);
       await fetchTasks({ limit: 50 });
@@ -65,8 +87,8 @@ const TaskList: React.FC = () => {
     setTaskActioning(taskId, true);
     try {
       await taskApi.resume(taskId);
-      await evalApi.run(taskId);
-      await fetchTasks({ limit: 50 });
+      await workflowApi.start(taskId);
+      navigate(`/tasks/${taskId}`);
     } catch (error) {
       console.error('Failed to resume task:', error);
       await fetchTasks({ limit: 50 });
@@ -78,8 +100,8 @@ const TaskList: React.FC = () => {
   const handleStart = async (taskId: number) => {
     setTaskActioning(taskId, true);
     try {
-      await evalApi.run(taskId);
-      await fetchTasks({ limit: 50 });
+      await workflowApi.start(taskId);
+      navigate(`/tasks/${taskId}`);
     } catch (error) {
       console.error('Failed to start task:', error);
       await fetchTasks({ limit: 50 });
@@ -102,8 +124,9 @@ const TaskList: React.FC = () => {
   };
 
   const getStatusTag = (status: TaskStatus) => {
-    const config: Record<TaskStatus, { color: string; label: string; bg: string }> = {
+    const config: Record<string, { color: string; label: string; bg: string }> = {
       pending: { color: '#8c8c8c', label: '待执行', bg: 'rgba(140,140,140,0.1)' },
+      confirming: { color: '#faad14', label: '等待确认', bg: 'rgba(250,173,20,0.1)' },
       running: { color: '#1890ff', label: '运行中', bg: 'rgba(24,144,255,0.1)' },
       completed: { color: '#52c41a', label: '已完成', bg: 'rgba(82,196,26,0.1)' },
       failed: { color: '#ff4d4f', label: '失败', bg: 'rgba(255,77,79,0.1)' },
@@ -196,7 +219,7 @@ const TaskList: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: TaskStatus) => getStatusTag(status),
+      render: (_status: TaskStatus, record: Task) => getStatusTag(getEffectiveStatus(record)),
     },
     {
       title: '进度',
@@ -228,6 +251,7 @@ const TaskList: React.FC = () => {
       key: 'action',
       render: (_: any, record: Task) => {
         const isActioning = actioningTasks.has(record.id);
+        const effectiveStatus = getEffectiveStatus(record);
 
         return (
           <Space size={8}>
@@ -241,7 +265,6 @@ const TaskList: React.FC = () => {
               查看
             </Button>
 
-            {/* 操作进行中：只显示一个加载状态按钮，禁用其他操作 */}
             {isActioning ? (
               <Button
                 type="text"
@@ -254,7 +277,7 @@ const TaskList: React.FC = () => {
               </Button>
             ) : (
               <>
-                {record.status === 'pending' && (
+                {effectiveStatus === 'pending' && (
                   <Button
                     type="text"
                     size="small"
@@ -265,7 +288,18 @@ const TaskList: React.FC = () => {
                     启动
                   </Button>
                 )}
-                {record.status === 'running' && (
+                {effectiveStatus === 'confirming' && (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => navigate(`/tasks/${record.id}`)}
+                    style={{ color: '#d48806' }}
+                  >
+                    查看并确认
+                  </Button>
+                )}
+                {effectiveStatus === 'running' && (
                   <>
                     <Button
                       type="text"
@@ -288,7 +322,7 @@ const TaskList: React.FC = () => {
                     </Popconfirm>
                   </>
                 )}
-                {(record.status === 'failed' || record.status === 'cancelled') && (
+                {(effectiveStatus === 'failed' || effectiveStatus === 'cancelled') && (
                   <>
                     <Button
                       type="text"
@@ -310,7 +344,7 @@ const TaskList: React.FC = () => {
                     </Button>
                   </>
                 )}
-                {record.status === 'completed' && (
+                {effectiveStatus === 'completed' && (
                   <Button
                     type="text"
                     size="small"
@@ -321,7 +355,7 @@ const TaskList: React.FC = () => {
                     重试
                   </Button>
                 )}
-                {record.status !== 'running' && (
+                {effectiveStatus !== 'running' && effectiveStatus !== 'confirming' && (
                   <Popconfirm
                     title="确定要删除这个任务吗？"
                     onConfirm={() => handleDelete(record.id)}

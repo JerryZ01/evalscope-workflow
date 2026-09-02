@@ -4,7 +4,7 @@ import {
 } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import { useTaskStore } from '@/stores';
-import { evalApi } from '@/api/results';
+import { workflowApi } from '@/api/workflow';
 import { modelApi } from '@/api/models';
 import { catalogApi } from '@/api/catalog';
 import type { ManagedModelBrief } from '@/types';
@@ -31,10 +31,11 @@ const EditTaskModal: React.FC<Props> = ({ open, onClose, taskId }) => {
 
   useEffect(() => {
     if (open) {
+      setInitLoading(true);
       Promise.all([
         modelApi.listBrief().then(data => setManagedModels(data)).catch(() => {}),
         catalogApi.getEngines().then(data => setEngines(data.engines)).catch(() => {}),
-      ]);
+      ]).finally(() => setInitLoading(false));
     }
   }, [open]);
 
@@ -47,7 +48,7 @@ const EditTaskModal: React.FC<Props> = ({ open, onClose, taskId }) => {
         model_type: currentTask.model_type,
         model_name: currentTask.model_name,
         model_url: currentTask.model_url || '',
-        model_key: currentTask.model_key || '',
+        model_key: '',
         stream: !!genConfig.stream,
         limit: currentTask.limit,
         eval_batch_size: currentTask.eval_batch_size || 1,
@@ -64,7 +65,7 @@ const EditTaskModal: React.FC<Props> = ({ open, onClose, taskId }) => {
         model_type: model.model_type,
         model_name: model.model_name,
         model_url: model.api_url || undefined,
-        model_key: model.api_key || undefined,
+        model_key: undefined,
       });
     }
   };
@@ -75,7 +76,7 @@ const EditTaskModal: React.FC<Props> = ({ open, onClose, taskId }) => {
     model_name: values.model_name,
     model_type: values.model_type || 'openai_api',
     model_url: values.model_url,
-    model_key: values.model_key,
+    ...(values.model_key ? { model_key: values.model_key } : {}),
     generation_config: {
       stream: !!values.stream,
     },
@@ -106,10 +107,9 @@ const EditTaskModal: React.FC<Props> = ({ open, onClose, taskId }) => {
       const values = await form.validateFields();
       setLoading(true);
       await updateTask(Number(taskId), buildUpdateParams(values));
-      // 已完成任务可以直接运行，不需要 retry
-      await evalApi.run(Number(taskId));
+      await workflowApi.start(Number(taskId));
       await fetchTask(Number(taskId));
-      message.success('参数已保存，任务已重新启动');
+      message.success('参数已保存，工作流已启动');
       onClose();
     } catch (error: any) {
       const errMsg = error?.response?.data?.detail || error?.message || String(error) || '操作失败';
@@ -176,8 +176,8 @@ const EditTaskModal: React.FC<Props> = ({ open, onClose, taskId }) => {
             <Input placeholder="例如: https://ark.cn-beijing.volces.com/api/v3" />
           </Form.Item>
 
-          <Form.Item name="model_key" label="API Key (可选)">
-            <Input.Password placeholder="API Key" />
+          <Form.Item name="model_key" label="替换 API Key（可选）">
+            <Input.Password placeholder="留空则保留现有密钥" />
           </Form.Item>
 
           <Divider style={{ margin: '12px 0' }}>评测参数</Divider>

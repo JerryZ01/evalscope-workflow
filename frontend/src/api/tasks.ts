@@ -66,10 +66,6 @@ export const taskApi = {
   stop: (taskId: number) =>
     client.post<{ id: number; status: TaskStatus; message: string }>(`/tasks/${taskId}/stop`),
 
-  // 暂停任务
-  pause: (taskId: number) =>
-    client.post<{ id: number; status: TaskStatus; message: string }>(`/tasks/${taskId}/pause`),
-
   // 恢复任务
   resume: (taskId: number) =>
     client.post<{ id: number; status: TaskStatus; message: string }>(`/tasks/${taskId}/resume`),

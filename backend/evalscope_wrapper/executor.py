@@ -42,7 +42,10 @@ def _sanitize(value: Any) -> Any:
 class EvalScopeExecutor:
     """EvalScope 执行器"""
 
-    def __init__(self, output_dir: str = '../outputs'):
+    def __init__(self, output_dir: Optional[str] = None):
+        if output_dir is None:
+            from app.core.config import settings
+            output_dir = settings.EVALSCOPE_WORK_DIR
         self.output_dir = output_dir
         self._running_tasks: Dict[str, threading.Thread] = {}
         self._task_status: Dict[str, Dict[str, Any]] = {}
@@ -139,7 +142,9 @@ class EvalScopeExecutor:
         if TaskConfig is None or run_task is None:
             raise RuntimeError('EvalScope is not available')
 
-        base_task_dir = Path(self.output_dir).resolve() / f'task_{task_id}'
+        from app.core.output_paths import build_run_directory_name
+
+        base_task_dir = Path(self.output_dir).resolve() / build_run_directory_name()
         base_task_dir.mkdir(parents=True, exist_ok=True)
         cancel_event = self._cancel_events.setdefault(task_id, threading.Event())
 

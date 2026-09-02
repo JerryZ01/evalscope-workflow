@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Steps, Card, Form, Input, Select, InputNumber, Button, Space, Checkbox, message, Divider, Spin, Switch } from 'antd';
 import { ArrowLeftOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useCatalogStore, useTaskStore } from '@/stores';
-import { evalApi } from '@/api/results';
+import { workflowApi } from '@/api/workflow';
 import { modelApi } from '@/api/models';
 import { catalogApi } from '@/api/catalog';
 import type { ManagedModelBrief } from '@/types';
@@ -174,12 +174,12 @@ const TaskEdit: React.FC = () => {
       // 重试任务（会重置状态为 pending）
       try {
         await useTaskStore.getState().retryTask(Number(taskId));
-      } catch (e) {
+      } catch {
         // 如果重试失败，可能状态不支持，直接启动
       }
 
       // 启动任务
-      await evalApi.run(Number(taskId));
+      await workflowApi.start(Number(taskId));
 
       message.success('任务已保存并启动');
       navigate(`/tasks/${taskId}`);

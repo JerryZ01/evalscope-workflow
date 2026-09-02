@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Steps, Card, Form, Input, Select, InputNumber, Button, Space, Checkbox, message, Divider, Tag, Tooltip, Alert, Switch } from 'antd';
+import { Steps, Card, Form, Input, Select, InputNumber, Button, Space, message, Divider, Tag, Tooltip, Alert, Switch } from 'antd';
 import { PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useCatalogStore, useTaskStore } from '@/stores';
 import PageHeader from '@/components/common/PageHeader';
@@ -79,25 +79,19 @@ const TaskCreate: React.FC = () => {
   }, [searchParams]);
 
   // ========== 模型选择处理 ==========
-  const handleSelectManagedModel = async (modelId: number) => {
+  const handleSelectManagedModel = (modelId: number) => {
     setSelectedManagedModelId(modelId);
-    try {
-      const model = await modelApi.get(modelId);
-      console.log('选择已管理模型:', model);
-
-      // 直接更新状态，不依赖 Form
+    const model = managedModels.find(item => item.id === modelId);
+    if (model) {
       setFormData(prev => ({
         ...prev,
         modelConfig: {
           model_name: model.model_name,
           model_type: model.model_type,
           model_url: model.api_url || undefined,
-          model_key: model.api_key || undefined,
+          model_key: undefined,
         }
       }));
-    } catch (error) {
-      console.error('获取模型详情失败:', error);
-      message.error('获取模型详情失败');
     }
   };
 
@@ -265,10 +259,50 @@ const TaskCreate: React.FC = () => {
       title: '选择数据集',
       content: (
         <div>
-          <Input
-            placeholder="搜索数据集..."
-            style={{ marginBottom: 16 }}
-            onChange={(e) => fetchDatasets({ search: e.target.value, limit: 100 })}
+          <Select
+            mode="multiple"
+            allowClear
+            showSearch
+            value={formData.datasets}
+            placeholder="搜索并选择数据集"
+            filterOption={false}
+            maxTagTextLength={32}
+            style={{ width: '100%', marginBottom: 16 }}
+            onSearch={(value) => fetchDatasets({ search: value, limit: 100 })}
+            onChange={(values) => updateFormData('datasets', values)}
+            options={datasets.map((ds) => ({
+              label: ds.pretty_name || ds.name,
+              value: ds.name,
+            }))}
+            optionRender={(option) => {
+              const ds = datasets.find(item => item.name === option.value);
+              if (!ds) return option.label;
+
+              return (
+                <Space size={4} wrap>
+                  <span style={{ fontWeight: 500 }}>{ds.pretty_name || ds.name}</span>
+                  {ds.need_sandbox && (
+                    <Tooltip title="此数据集需要在 Docker 沙箱中执行代码">
+                      <Tag color="orange" style={{ margin: 0 }}>🐳 沙箱</Tag>
+                    </Tooltip>
+                  )}
+                  {ds.need_judge && (
+                    <Tooltip title="此数据集需要 LLM 作为评判器">
+                      <Tag color="purple" style={{ margin: 0 }}>⚖️ LLM评判</Tag>
+                    </Tooltip>
+                  )}
+                  {ds.tags?.map((tag) => (
+                    <Tag
+                      key={tag}
+                      color={tag === 'Coding' ? 'volcano' : 'blue'}
+                      style={{ margin: 0 }}
+                    >
+                      {tag}
+                    </Tag>
+                  ))}
+                </Space>
+              );
+            }}
           />
 
           {/* 沙箱说明 */}
@@ -302,61 +336,8 @@ const TaskCreate: React.FC = () => {
             style={{ marginBottom: 16 }}
           />
 
-          <Checkbox.Group
-            value={formData.datasets}
-            onChange={(values) => updateFormData('datasets', values as string[])}
-            style={{ width: '100%' }}
-          >
-            <div style={{ maxHeight: 400, overflow: 'auto' }}>
-              {datasets.map((ds) => (
-                <Checkbox
-                  key={ds.name}
-                  value={ds.name}
-                  style={{ display: 'block', marginBottom: 8, padding: 8, borderRadius: 4 }}
-                >
-                  <Space size={4} wrap>
-                    <span style={{ fontWeight: 500 }}>{ds.pretty_name || ds.name}</span>
-
-                    {/* 沙箱标识 */}
-                    {ds.need_sandbox && (
-                      <Tooltip title="此数据集需要在 Docker 沙箱中执行代码，评测时会自动启动容器">
-                        <Tag color="orange" style={{ margin: 0 }}>🐳 沙箱</Tag>
-                      </Tooltip>
-                    )}
-
-                    {/* LLM Judge 标识 */}
-                    {ds.need_judge && (
-                      <Tooltip title="此数据集需要 LLM 作为评判器评估答案，系统将自动使用您选择的模型作为评判模型">
-                        <Tag color="purple" style={{ margin: 0 }}>⚖️ LLM评判</Tag>
-                      </Tooltip>
-                    )}
-
-                    {/* 数据集标签 */}
-                    {ds.tags && ds.tags.map((tag) => (
-                      <Tag
-                        key={tag}
-                        color={tag === 'Coding' ? 'volcano' : 'blue'}
-                        style={{ margin: 0 }}
-                      >
-                        {tag}
-                      </Tag>
-                    ))}
-
-                    {ds.description && (
-                      <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-                        - {ds.description.substring(0, 50)}...
-                      </span>
-                    )}
-                  </Space>
-                </Checkbox>
-              ))}
-            </div>
-          </Checkbox.Group>
-
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <div>
-              已选择: <strong>{formData.datasets.length}</strong> 个数据集
-            </div>
+            <span>已选择: <strong>{formData.datasets.length}</strong> 个数据集</span>
 
             <Space size={4} wrap>
               {/* 选中数据集中需要沙箱的提示 */}

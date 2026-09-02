@@ -29,11 +29,11 @@ npm install
 ### 启动开发服务
 
 ```bash
-# 后端（端口 8000）
+# 后端（端口 5900）
 cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 5900 --reload
 
-# 前端（端口 5173，代理 /api 到 8000）
+# 前端（端口 5801，代理 /api 到 5900）
 cd frontend
 npm run dev
 ```
@@ -135,7 +135,6 @@ export const myApi = {
 class TaskStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
-    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

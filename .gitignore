@@ -28,8 +28,11 @@ ENV/
 
 # Backend
 *.db
+*.db-*
+*.db.*
 *.sqlite
 *.sqlite3
+backend/data/
 outputs/
 *.log
 
@@ -49,3 +52,6 @@ dist-ssr/
 *.swp
 *.swo
 *~
+
+# Secrets
+.env
