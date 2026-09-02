@@ -55,3 +55,8 @@ dist-ssr/
 
 # Secrets
 .env
+
+# 本地/临时文档（不入库）
+DEBUG_GUIDE.md
+EMERGENCY_FIX.md
+*面试*.md
